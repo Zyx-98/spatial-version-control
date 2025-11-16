@@ -1,0 +1,17 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-gray-50;
+  }
+}
+
+/* Leaflet fix for marker icons */
+@layer utilities {
+  .leaflet-container .leaflet-marker-icon {
+    margin-left: -12px;
+    margin-top: -41px;
+  }
+}
