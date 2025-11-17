@@ -33,6 +33,11 @@ export class BranchController {
     return this.branchService.findOne(id, user);
   }
 
+  @Get(':id/permissions')
+  getBranchWithPermissions(@Param('id') id: string, @CurrentUser() user: User) {
+    return this.branchService.getBranchWithPermissions(id, user);
+  }
+
   @Post(':id/fetch')
   fetchMainBranch(@Param('id') id: string, @CurrentUser() user: User) {
     return this.branchService.fetchMainBranch(id, user);

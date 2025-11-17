@@ -87,6 +87,12 @@ export interface ConflictDetail {
   conflictType: "modified" | "deleted" | "both_modified";
 }
 
+export interface BranchWithPermissions {
+  branch: Branch;
+  canEdit: boolean;
+  hasOpenMergeRequest: boolean;
+}
+
 // Spatial Feature Types
 export enum SpatialFeatureType {
   POINT = "Point",

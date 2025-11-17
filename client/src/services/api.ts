@@ -8,6 +8,7 @@ import type {
   Branch,
   CreateBranchRequest,
   BranchConflicts,
+  BranchWithPermissions,
   Commit,
   CreateCommitRequest,
   MergeRequest,
@@ -101,6 +102,13 @@ class ApiService {
 
   async getBranch(id: string): Promise<Branch> {
     const response = await this.api.get<Branch>(`/branches/${id}`);
+    return response.data;
+  }
+
+  async getBranchWithPermissions(id: string): Promise<BranchWithPermissions> {
+    const response = await this.api.get<BranchWithPermissions>(
+      `/branches/${id}/permissions`
+    );
     return response.data;
   }
 

@@ -59,9 +59,24 @@
             <button
               v-if="!branch.isMain"
               @click="handleCreateMergeRequest"
-              class="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700"
+              :disabled="hasOpenMergeRequest"
+              :class="[
+                'px-4 py-2 rounded-md',
+                hasOpenMergeRequest
+                  ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                  : 'bg-green-600 text-white hover:bg-green-700',
+              ]"
+              :title="
+                hasOpenMergeRequest
+                  ? 'This branch already has an open merge request'
+                  : ''
+              "
             >
-              Create Merge Request
+              {{
+                hasOpenMergeRequest
+                  ? "PR Already Open"
+                  : "Create Merge Request"
+              }}
             </button>
           </div>
         </div>
@@ -161,7 +176,6 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { useAuthStore } from "@/stores/auth";
 import { useSpatialStore } from "@/stores/spatial";
 import { useMergeRequestStore } from "@/stores/mergeRequest";
 import { format } from "date-fns";
@@ -169,7 +183,6 @@ import MapViewer from "@/components/MapViewer.vue";
 
 const route = useRoute();
 const router = useRouter();
-const authStore = useAuthStore();
 const spatialStore = useSpatialStore();
 const mergeRequestStore = useMergeRequestStore();
 
@@ -182,14 +195,10 @@ const branch = computed(() => spatialStore.currentBranch);
 const commits = computed(() => spatialStore.commits);
 const features = computed(() => spatialStore.features);
 const conflicts = computed(() => spatialStore.conflicts);
-
-const canEdit = computed(() => {
-  if (!branch.value) return false;
-  if (branch.value.isMain) {
-    return authStore.isAdmin;
-  }
-  return branch.value.createdById === authStore.user?.id || authStore.isAdmin;
-});
+const canEdit = computed(() => spatialStore.branchCanEdit);
+const hasOpenMergeRequest = computed(
+  () => spatialStore.branchHasOpenMergeRequest
+);
 
 const formatDate = (date: string) => {
   return format(new Date(date), "MMM dd, yyyy HH:mm");
@@ -231,7 +240,7 @@ const handleCreateMergeRequest = async () => {
 onMounted(async () => {
   loading.value = true;
   try {
-    await spatialStore.fetchBranch(branchId);
+    await spatialStore.fetchBranchWithPermissions(branchId);
     await spatialStore.fetchCommits(branchId);
     await spatialStore.fetchLatestFeatures(branchId);
     await spatialStore.fetchBranches(datasetId);

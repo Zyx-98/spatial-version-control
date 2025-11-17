@@ -13,11 +13,13 @@ import {
   Branch,
   Commit,
   FeatureOperation,
+  MergeRequest,
+  MergeRequestStatus,
   SpatialFeature,
   User,
   UserRole,
 } from 'src/entities';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 
 @Injectable()
 export class BranchService {
@@ -28,6 +30,8 @@ export class BranchService {
     private commitRepository: Repository<Commit>,
     @InjectRepository(SpatialFeature)
     private spatialFeatureRepository: Repository<SpatialFeature>,
+    @InjectRepository(MergeRequest)
+    private mergeRequestRepository: Repository<MergeRequest>,
   ) {}
 
   async create(createBranchDto: CreateBranchDto, user: User): Promise<Branch> {
@@ -246,6 +250,43 @@ export class BranchService {
       return user.role === UserRole.ADMIN;
     }
 
-    return branch.createdById === user.id;
+    return branch.createdById === user.id || user.role === UserRole.ADMIN;
+  }
+
+  async hasOpenMergeRequest(branchId: string): Promise<boolean> {
+    const openStatuses = [
+      MergeRequestStatus.OPEN,
+      MergeRequestStatus.APPROVED,
+    ];
+
+    const count = await this.mergeRequestRepository.count({
+      where: {
+        sourceBranchId: branchId,
+        status: In(openStatuses),
+      },
+    });
+
+    return count > 0;
+  }
+
+  async getBranchWithPermissions(
+    id: string,
+    user: User,
+  ): Promise<{
+    branch: Branch;
+    canEdit: boolean;
+    hasOpenMergeRequest: boolean;
+  }> {
+    const branch = await this.findOne(id, user);
+    const canEdit = this.canEditBranch(branch, user);
+    const hasOpenMR = branch.isMain
+      ? false
+      : await this.hasOpenMergeRequest(id);
+
+    return {
+      branch,
+      canEdit,
+      hasOpenMergeRequest: hasOpenMR,
+    };
   }
 }
