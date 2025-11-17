@@ -1,170 +1,318 @@
 <template>
   <div class="max-w-7xl mx-auto">
-    <div class="mb-6">
-      <h1 class="text-3xl font-bold text-gray-900">Create Commit</h1>
-      <p class="text-gray-600 mt-2">Add spatial features and commit changes</p>
+    <!-- Loading State -->
+    <div v-if="loadingFeatures" class="text-center py-12">
+      <div
+        class="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600"
+      ></div>
+      <p class="mt-4 text-gray-600">Loading current features...</p>
     </div>
 
-    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-      <!-- Left Panel - Form -->
-      <div class="lg:col-span-1 space-y-6">
-        <!-- Commit Message -->
-        <div class="bg-white rounded-lg shadow p-6">
-          <h2 class="text-lg font-semibold mb-4">Commit Details</h2>
-          <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1"
-              >Commit Message</label
-            >
-            <textarea
-              v-model="commitMessage"
-              rows="3"
-              required
-              placeholder="Describe your changes..."
-              class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-primary-500 focus:border-primary-500"
-            ></textarea>
-          </div>
-        </div>
+    <div v-else>
+      <div class="mb-6">
+        <h1 class="text-3xl font-bold text-gray-900">Create Commit</h1>
+        <p class="text-gray-600 mt-2">
+          Edit existing features, add new ones, or remove features
+        </p>
+      </div>
 
-        <!-- Add Feature -->
-        <div class="bg-white rounded-lg shadow p-6">
-          <h2 class="text-lg font-semibold mb-4">Add Feature</h2>
-          <div class="space-y-4">
+      <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <!-- Left Panel - Form -->
+        <div class="lg:col-span-1 space-y-6">
+          <!-- Commit Message -->
+          <div class="bg-white rounded-lg shadow p-6">
+            <h2 class="text-lg font-semibold mb-4">Commit Details</h2>
             <div>
               <label class="block text-sm font-medium text-gray-700 mb-1"
-                >Geometry Type</label
+                >Commit Message</label
               >
-              <select
-                v-model="newFeature.geometryType"
-                class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-primary-500 focus:border-primary-500"
-              >
-                <option value="Point">Point</option>
-                <option value="LineString">LineString</option>
-                <option value="Polygon">Polygon</option>
-              </select>
-            </div>
-
-            <div>
-              <label class="block text-sm font-medium text-gray-700 mb-1"
-                >Operation</label
-              >
-              <select
-                v-model="newFeature.operation"
-                class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-primary-500 focus:border-primary-500"
-              >
-                <option value="create">Create</option>
-                <option value="update">Update</option>
-                <option value="delete">Delete</option>
-              </select>
-            </div>
-
-            <div>
-              <label class="block text-sm font-medium text-gray-700 mb-1">
-                Properties (JSON)
-              </label>
               <textarea
-                v-model="propertiesJson"
-                rows="4"
-                placeholder='{"name": "Feature Name", "type": "residential"}'
-                class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-primary-500 focus:border-primary-500 font-mono text-sm"
+                v-model="commitMessage"
+                rows="3"
+                required
+                placeholder="Describe your changes..."
+                class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-primary-500 focus:border-primary-500"
               ></textarea>
             </div>
+          </div>
 
+          <!-- Feature Properties Editor -->
+          <div
+            v-if="selectedFeature && currentTool !== 'edit'"
+            class="bg-white rounded-lg shadow p-6"
+          >
+            <h2 class="text-lg font-semibold mb-4">Edit Feature Properties</h2>
+            <div class="space-y-4">
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1"
+                  >Feature Type</label
+                >
+                <p class="text-sm text-gray-600">
+                  {{ selectedFeature.geometryType }}
+                </p>
+              </div>
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">
+                  Properties (JSON)
+                </label>
+                <textarea
+                  v-model="selectedFeatureProperties"
+                  rows="6"
+                  placeholder='{"name": "Feature Name", "type": "residential"}'
+                  class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-primary-500 focus:border-primary-500 font-mono text-sm"
+                  :class="{ 'border-red-500': propertiesError }"
+                ></textarea>
+                <p v-if="propertiesError" class="mt-1 text-xs text-red-600">
+                  {{ propertiesError }}
+                </p>
+              </div>
+              <div class="flex space-x-2">
+                <button
+                  @click="saveFeatureProperties"
+                  class="flex-1 px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+                >
+                  Save Changes
+                </button>
+                <button
+                  @click="cancelPropertyEdit"
+                  class="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Add New Feature Properties -->
+          <div
+            v-if="!selectedFeature && currentTool !== 'edit'"
+            class="bg-white rounded-lg shadow p-6"
+          >
+            <h2 class="text-lg font-semibold mb-4">New Feature Properties</h2>
+            <div class="space-y-4">
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">
+                  Properties (JSON) - Optional
+                </label>
+                <textarea
+                  v-model="newFeatureProperties"
+                  rows="4"
+                  placeholder='{"name": "Feature Name", "type": "residential"}'
+                  class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-primary-500 focus:border-primary-500 font-mono text-sm"
+                  :class="{ 'border-red-500': newPropertiesError }"
+                ></textarea>
+                <p v-if="newPropertiesError" class="mt-1 text-xs text-red-600">
+                  {{ newPropertiesError }}
+                </p>
+                <p class="mt-1 text-xs text-gray-500">
+                  These properties will be applied to the next feature you draw
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <!-- Changes Summary -->
+          <div class="bg-white rounded-lg shadow p-6">
+            <h2 class="text-lg font-semibold mb-4">Changes Summary</h2>
+            <div class="space-y-2 text-sm">
+              <div class="flex justify-between items-center">
+                <span class="text-gray-600">Added:</span>
+                <span class="font-semibold text-green-600">
+                  {{ addedCount }}
+                </span>
+              </div>
+              <div class="flex justify-between items-center">
+                <span class="text-gray-600">Modified:</span>
+                <span class="font-semibold text-orange-600">
+                  {{ modifiedCount }}
+                </span>
+              </div>
+              <div class="flex justify-between items-center">
+                <span class="text-gray-600">Deleted:</span>
+                <span class="font-semibold text-red-600">
+                  {{ deletedCount }}
+                </span>
+              </div>
+              <div class="border-t pt-2 mt-2 flex justify-between items-center">
+                <span class="text-gray-900 font-medium">Total Changes:</span>
+                <span class="font-bold text-gray-900">
+                  {{ totalChanges }}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Features List -->
+          <div class="bg-white rounded-lg shadow p-6">
+            <h2 class="text-lg font-semibold mb-4">
+              Current Features ({{ allFeatures.length }})
+            </h2>
+            <div class="space-y-2 max-h-96 overflow-y-auto">
+              <div
+                v-for="(feature, index) in allFeatures"
+                :key="feature.id"
+                class="flex justify-between items-center p-3 rounded-lg transition-colors cursor-pointer"
+                :class="getFeatureCardClass(feature)"
+                @click="selectFeatureForEdit(feature, index)"
+              >
+                <div class="flex-1">
+                  <div class="flex items-center space-x-2">
+                    <p class="font-medium text-sm">
+                      {{ feature.geometryType }}
+                    </p>
+                    <span
+                      class="px-2 py-0.5 text-xs rounded-full"
+                      :class="getOperationBadgeClass(feature.operation)"
+                    >
+                      {{ getOperationLabel(feature.operation) }}
+                    </span>
+                  </div>
+                  <p
+                    v-if="
+                      feature.properties &&
+                      Object.keys(feature.properties).length > 0
+                    "
+                    class="text-xs text-gray-500 mt-1 truncate"
+                  >
+                    {{ Object.keys(feature.properties).join(", ") }}
+                  </p>
+                  <p
+                    v-if="feature.featureId"
+                    class="text-xs text-gray-400 mt-1"
+                  >
+                    ID: {{ feature.featureId.substring(0, 8) }}...
+                  </p>
+                </div>
+                <button
+                  v-if="feature.operation !== 'delete'"
+                  @click.stop="markFeatureAsDeleted(feature)"
+                  class="ml-2 text-red-600 hover:text-red-700 p-1"
+                  title="Mark for deletion"
+                >
+                  <svg
+                    class="h-5 w-5"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      stroke-width="2"
+                      d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+                    />
+                  </svg>
+                </button>
+                <button
+                  v-else
+                  @click.stop="restoreFeature(feature)"
+                  class="ml-2 text-green-600 hover:text-green-700 p-1"
+                  title="Restore feature"
+                >
+                  <svg
+                    class="h-5 w-5"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      stroke-width="2"
+                      d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+                    />
+                  </svg>
+                </button>
+              </div>
+              <div
+                v-if="allFeatures.length === 0"
+                class="text-center text-gray-500 py-4"
+              >
+                No features yet. Draw on the map to add features.
+              </div>
+            </div>
+          </div>
+
+          <!-- Actions -->
+          <div class="flex space-x-3">
             <button
-              @click="addFeatureManually"
-              class="w-full px-4 py-2 bg-primary-600 text-white rounded-md hover:bg-primary-700"
+              @click="handleCancel"
+              class="flex-1 px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
             >
-              Add Feature
+              Cancel
+            </button>
+            <button
+              @click="handleCommit"
+              :disabled="!canCommit || spatialStore.loading"
+              class="flex-1 px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {{ spatialStore.loading ? "Committing..." : "Commit Changes" }}
             </button>
           </div>
         </div>
 
-        <!-- Features List -->
-        <div class="bg-white rounded-lg shadow p-6">
-          <h2 class="text-lg font-semibold mb-4">
-            Features ({{ features.length }})
-          </h2>
-          <div class="space-y-2 max-h-96 overflow-y-auto">
-            <div
-              v-for="(feature, index) in features"
-              :key="index"
-              class="flex justify-between items-center p-3 bg-gray-50 rounded-lg"
-            >
-              <div>
-                <p class="font-medium text-sm">{{ feature.geometryType }}</p>
-                <p class="text-xs text-gray-500">{{ feature.operation }}</p>
-              </div>
-              <button
-                @click="removeFeature(index)"
-                class="text-red-600 hover:text-red-700"
-              >
-                <svg
-                  class="h-5 w-5"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
+        <!-- Right Panel - Map -->
+        <div class="lg:col-span-2">
+          <div class="bg-white rounded-lg shadow p-6 sticky top-6">
+            <div class="flex justify-between items-center mb-4">
+              <h2 class="text-lg font-semibold">Map Editor</h2>
+              <div class="flex space-x-2">
+                <button
+                  v-for="tool in tools"
+                  :key="tool.type"
+                  @click="setTool(tool.type)"
+                  :disabled="currentTool === 'edit'"
+                  :class="[
+                    'px-3 py-2 text-sm rounded-md flex items-center space-x-2',
+                    currentTool === tool.type
+                      ? 'bg-primary-600 text-white'
+                      : 'bg-gray-100 text-gray-700 hover:bg-gray-200',
+                    currentTool === 'edit' && tool.type !== 'edit'
+                      ? 'opacity-50 cursor-not-allowed'
+                      : '',
+                  ]"
+                  :title="tool.description"
                 >
-                  <path
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    stroke-width="2"
-                    d="M6 18L18 6M6 6l12 12"
-                  />
-                </svg>
-              </button>
+                  <span>{{ tool.icon }}</span>
+                  <span>{{ tool.label }}</span>
+                </button>
+              </div>
             </div>
-            <div
-              v-if="features.length === 0"
-              class="text-center text-gray-500 py-4"
-            >
-              No features added yet
-            </div>
-          </div>
-        </div>
-
-        <!-- Actions -->
-        <div class="flex space-x-3">
-          <button
-            @click="router.back()"
-            class="flex-1 px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
-          >
-            Cancel
-          </button>
-          <button
-            @click="handleCommit"
-            :disabled="!canCommit || spatialStore.loading"
-            class="flex-1 px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {{ spatialStore.loading ? "Committing..." : "Commit" }}
-          </button>
-        </div>
-      </div>
-
-      <!-- Right Panel - Map -->
-      <div class="lg:col-span-2">
-        <div class="bg-white rounded-lg shadow p-6 sticky top-6">
-          <div class="flex justify-between items-center mb-4">
-            <h2 class="text-lg font-semibold">Draw Features</h2>
-            <div class="flex space-x-2">
-              <button
-                v-for="tool in tools"
-                :key="tool.type"
-                @click="currentTool = tool.type"
-                :class="[
-                  'px-3 py-1 text-sm rounded-md',
-                  currentTool === tool.type
-                    ? 'bg-primary-600 text-white'
-                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200',
-                ]"
-              >
-                {{ tool.label }}
-              </button>
+            <MapEditor
+              ref="mapEditorRef"
+              :height="600"
+              :tool="currentTool"
+              :features="allFeatures"
+              @featureCreated="handleFeatureCreated"
+              @featureDeleted="handleFeatureDeleted"
+              @featureSelected="handleFeatureSelected"
+              @geometryUpdated="handleGeometryUpdated"
+              @toolChange="handleToolChange"
+            />
+            <div class="mt-4 p-4 bg-blue-50 rounded-md">
+              <p class="text-sm font-semibold text-blue-900 mb-2">
+                💡 Instructions:
+              </p>
+              <ul class="text-xs text-blue-800 space-y-1.5">
+                <li>
+                  <strong>Add:</strong> Select Point/Line/Polygon and draw on
+                  map
+                </li>
+                <li>
+                  <strong>Edit Properties:</strong> Select feature → Edit in
+                  left panel
+                </li>
+                <li>
+                  <strong>Edit Geometry:</strong> Select feature → Click "Edit
+                  Geometry" → Drag markers
+                </li>
+                <li>
+                  <strong>Delete:</strong> Click trash icon in feature list
+                </li>
+                <li><strong>Keyboard:</strong> Delete key, Escape to cancel</li>
+              </ul>
             </div>
           </div>
-          <MapEditor
-            :height="600"
-            :tool="currentTool"
-            @featureCreated="handleFeatureCreated"
-          />
         </div>
       </div>
     </div>
@@ -172,7 +320,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, reactive } from "vue";
+import { ref, computed, onMounted, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useSpatialStore } from "@/stores/spatial";
 import MapEditor from "@/components/MapEditor.vue";
@@ -181,6 +329,7 @@ import {
   SpatialFeatureType,
   FeatureOperation,
 } from "@/types";
+import { v4 as uuidv4 } from "uuid";
 
 const route = useRoute();
 const router = useRouter();
@@ -189,56 +338,462 @@ const spatialStore = useSpatialStore();
 const branchId = route.params.branchId as string;
 const datasetId = route.params.datasetId as string;
 
+// State
+const loadingFeatures = ref(true);
 const commitMessage = ref("");
-const features = ref<SpatialFeatureRequest[]>([]);
-const propertiesJson = ref("{}");
-const currentTool = ref<"point" | "line" | "polygon">("point");
+const currentTool = ref<"point" | "line" | "polygon" | "select" | "edit">(
+  "select"
+);
+const mapEditorRef = ref<InstanceType<typeof MapEditor> | null>(null);
+
+// Features state
+const originalFeatures = ref<any[]>([]);
+const currentFeatures = ref<any[]>([]);
+const newFeatures = ref<any[]>([]);
+const deletedFeatureIds = ref<Set<string>>(new Set());
+const modifiedFeatureIds = ref<Set<string>>(new Set());
+
+// Properties editing
+const selectedFeature = ref<any | null>(null);
+const selectedFeatureIndex = ref<number | null>(null);
+const selectedFeatureProperties = ref("{}");
+const propertiesError = ref("");
+const newFeatureProperties = ref("{}");
+const newPropertiesError = ref("");
 
 const tools = [
-  { type: "point" as const, label: "Point" },
-  { type: "line" as const, label: "Line" },
-  { type: "polygon" as const, label: "Polygon" },
+  {
+    type: "select",
+    label: "Select",
+    icon: "🔍",
+    description: "Select and edit features",
+  },
+  { type: "point", label: "Point", icon: "📍", description: "Draw points" },
+  { type: "line", label: "Line", icon: "📏", description: "Draw lines" },
+  {
+    type: "polygon",
+    label: "Polygon",
+    icon: "⬡",
+    description: "Draw polygons",
+  },
 ];
 
-const newFeature = reactive({
-  geometryType: "Point" as SpatialFeatureType,
-  operation: "create" as FeatureOperation,
+// Helper function for deep comparison
+const deepEqual = (obj1: any, obj2: any): boolean => {
+  return JSON.stringify(obj1) === JSON.stringify(obj2);
+};
+
+// Computed
+const allFeatures = computed(() => {
+  const features = [];
+
+  // Add original features (with their current state)
+  for (const originalFeature of originalFeatures.value) {
+    const featureId = originalFeature.featureId;
+    const isDeleted = deletedFeatureIds.value.has(featureId);
+    const isModified = modifiedFeatureIds.value.has(featureId);
+
+    // Find the current version if modified
+    let currentFeature = originalFeature;
+    if (isModified) {
+      const modified = currentFeatures.value.find(
+        (f) => f.featureId === featureId
+      );
+      if (modified) currentFeature = modified;
+    }
+
+    features.push({
+      ...currentFeature,
+      id: featureId,
+      operation: isDeleted ? "delete" : isModified ? "update" : "none",
+      isOriginal: true,
+    });
+  }
+
+  // Add new features
+  for (const feature of newFeatures.value) {
+    features.push({
+      ...feature,
+      id: feature.featureId,
+      operation: "create",
+      isOriginal: false,
+    });
+  }
+
+  return features;
 });
 
+const addedCount = computed(() => newFeatures.value.length);
+const modifiedCount = computed(() => modifiedFeatureIds.value.size);
+const deletedCount = computed(() => deletedFeatureIds.value.size);
+const totalChanges = computed(
+  () => addedCount.value + modifiedCount.value + deletedCount.value
+);
+
 const canCommit = computed(() => {
-  return commitMessage.value.trim() !== "" && features.value.length > 0;
+  return commitMessage.value.trim() !== "" && totalChanges.value > 0;
 });
+
+// Watch for properties validation
+watch(selectedFeatureProperties, (newValue) => {
+  try {
+    JSON.parse(newValue);
+    propertiesError.value = "";
+  } catch (e) {
+    propertiesError.value = "Invalid JSON format";
+  }
+});
+
+watch(newFeatureProperties, (newValue) => {
+  try {
+    JSON.parse(newValue);
+    newPropertiesError.value = "";
+  } catch (e) {
+    newPropertiesError.value = "Invalid JSON format";
+  }
+});
+
+// Methods
+const loadCurrentFeatures = async () => {
+  try {
+    loadingFeatures.value = true;
+    const features = await spatialStore.fetchLatestFeatures(branchId);
+
+    originalFeatures.value = features.map((f) => ({
+      ...f,
+      featureId: f.featureId || uuidv4(),
+      geometryType: f.geometryType,
+      geometry: f.geometry,
+      properties: f.properties || {},
+      operation: f.operation,
+    }));
+
+    currentFeatures.value = JSON.parse(JSON.stringify(originalFeatures.value));
+  } catch (error) {
+    console.error("Failed to load features:", error);
+    alert("Failed to load current features");
+  } finally {
+    loadingFeatures.value = false;
+  }
+};
+
+const setTool = (tool: string) => {
+  if (currentTool.value === "edit") return;
+  currentTool.value = tool as any;
+};
+
+const handleToolChange = (tool: string) => {
+  currentTool.value = tool as any;
+};
 
 const handleFeatureCreated = (geometry: any) => {
   try {
-    const properties = JSON.parse(propertiesJson.value || "{}");
-    features.value.push({
+    const properties = newFeatureProperties.value.trim()
+      ? JSON.parse(newFeatureProperties.value)
+      : {};
+
+    const newFeature = {
+      featureId: uuidv4(),
       geometryType: geometry.type as SpatialFeatureType,
       geometry,
       properties,
       operation: FeatureOperation.CREATE,
-    });
+    };
+
+    newFeatures.value.push(newFeature);
+    newFeatureProperties.value = "{}";
+    newPropertiesError.value = "";
   } catch (error) {
-    alert("Invalid properties JSON");
+    alert("Invalid properties JSON. Feature created without properties.");
+    const newFeature = {
+      featureId: uuidv4(),
+      geometryType: geometry.type as SpatialFeatureType,
+      geometry,
+      properties: {},
+      operation: FeatureOperation.CREATE,
+    };
+    newFeatures.value.push(newFeature);
   }
 };
 
-const addFeatureManually = () => {
-  alert("Use the map to draw features. Manual coordinate entry coming soon!");
+const handleFeatureDeleted = (index: number) => {
+  const feature = allFeatures.value[index];
+  markFeatureAsDeleted(feature);
 };
 
-const removeFeature = (index: number) => {
-  features.value.splice(index, 1);
+const handleFeatureSelected = (index: number) => {
+  const feature = allFeatures.value[index];
+  if (feature.operation !== "delete") {
+    selectFeatureForEdit(feature, index);
+  }
+};
+
+const handleGeometryUpdated = (index: number, newGeometry: any) => {
+  const feature = allFeatures.value[index];
+  const featureId = feature.featureId;
+
+  if (feature.isOriginal) {
+    // Update existing feature
+    const currentIndex = currentFeatures.value.findIndex(
+      (f) => f.featureId === featureId
+    );
+    if (currentIndex !== -1) {
+      currentFeatures.value[currentIndex] = {
+        ...currentFeatures.value[currentIndex],
+        geometry: newGeometry,
+      };
+
+      // Check if it's actually different from original
+      const original = originalFeatures.value.find(
+        (f) => f.featureId === featureId
+      );
+      if (original) {
+        const hasGeometryChanged = !deepEqual(original.geometry, newGeometry);
+        const hasPropertiesChanged = !deepEqual(
+          original.properties,
+          currentFeatures.value[currentIndex].properties
+        );
+
+        if (hasGeometryChanged || hasPropertiesChanged) {
+          modifiedFeatureIds.value.add(featureId);
+        } else {
+          modifiedFeatureIds.value.delete(featureId);
+        }
+      }
+    }
+  } else {
+    // Update new feature
+    const newIndex = newFeatures.value.findIndex(
+      (f) => f.featureId === featureId
+    );
+    if (newIndex !== -1) {
+      newFeatures.value[newIndex] = {
+        ...newFeatures.value[newIndex],
+        geometry: newGeometry,
+      };
+    }
+  }
+
+  // Clear selection
+  selectedFeature.value = null;
+  selectedFeatureIndex.value = null;
+};
+
+const selectFeatureForEdit = (feature: any, index: number) => {
+  if (feature.operation === "delete" || currentTool.value === "edit") return;
+
+  selectedFeature.value = feature;
+  selectedFeatureIndex.value = index;
+  selectedFeatureProperties.value = JSON.stringify(
+    feature.properties || {},
+    null,
+    2
+  );
+  propertiesError.value = "";
+  currentTool.value = "select";
+};
+
+const saveFeatureProperties = () => {
+  if (propertiesError.value) {
+    alert("Please fix the JSON errors before saving");
+    return;
+  }
+
+  try {
+    const newProperties = JSON.parse(selectedFeatureProperties.value);
+    const featureId = selectedFeature.value.featureId;
+
+    if (selectedFeature.value.isOriginal) {
+      // Update existing feature
+      const index = currentFeatures.value.findIndex(
+        (f) => f.featureId === featureId
+      );
+      if (index !== -1) {
+        currentFeatures.value[index] = {
+          ...currentFeatures.value[index],
+          properties: newProperties,
+        };
+
+        // Check if it's actually different from original
+        const original = originalFeatures.value.find(
+          (f) => f.featureId === featureId
+        );
+        if (original) {
+          const hasGeometryChanged = !deepEqual(
+            original.geometry,
+            currentFeatures.value[index].geometry
+          );
+          const hasPropertiesChanged = !deepEqual(
+            original.properties,
+            newProperties
+          );
+
+          // Only mark as modified if something actually changed
+          if (hasGeometryChanged || hasPropertiesChanged) {
+            modifiedFeatureIds.value.add(featureId);
+          } else {
+            modifiedFeatureIds.value.delete(featureId);
+          }
+        }
+      }
+    } else {
+      // Update new feature
+      const index = newFeatures.value.findIndex(
+        (f) => f.featureId === featureId
+      );
+      if (index !== -1) {
+        newFeatures.value[index] = {
+          ...newFeatures.value[index],
+          properties: newProperties,
+        };
+      }
+    }
+
+    selectedFeature.value = null;
+    selectedFeatureIndex.value = null;
+    alert("Properties saved successfully!");
+  } catch (error) {
+    alert("Failed to save properties");
+  }
+};
+
+const cancelPropertyEdit = () => {
+  selectedFeature.value = null;
+  selectedFeatureIndex.value = null;
+};
+
+const markFeatureAsDeleted = (feature: any) => {
+  if (!confirm("Are you sure you want to mark this feature for deletion?")) {
+    return;
+  }
+
+  if (feature.isOriginal) {
+    deletedFeatureIds.value.add(feature.featureId);
+    modifiedFeatureIds.value.delete(feature.featureId);
+  } else {
+    // Remove from new features
+    const index = newFeatures.value.findIndex(
+      (f) => f.featureId === feature.featureId
+    );
+    if (index !== -1) {
+      newFeatures.value.splice(index, 1);
+    }
+  }
+
+  if (selectedFeature.value?.featureId === feature.featureId) {
+    selectedFeature.value = null;
+    selectedFeatureIndex.value = null;
+  }
+};
+
+const restoreFeature = (feature: any) => {
+  deletedFeatureIds.value.delete(feature.featureId);
+};
+
+const getFeatureCardClass = (feature: any) => {
+  const baseClass = "border-2";
+  if (
+    selectedFeature.value?.featureId === feature.featureId &&
+    currentTool.value !== "edit"
+  ) {
+    return `${baseClass} border-blue-500 bg-blue-50`;
+  }
+  switch (feature.operation) {
+    case "create":
+      return `${baseClass} border-green-200 bg-green-50 hover:bg-green-100`;
+    case "update":
+      return `${baseClass} border-orange-200 bg-orange-50 hover:bg-orange-100`;
+    case "delete":
+      return `${baseClass} border-red-200 bg-red-50 hover:bg-red-100 opacity-60`;
+    default:
+      return `${baseClass} border-gray-200 bg-gray-50 hover:bg-gray-100`;
+  }
+};
+
+const getOperationBadgeClass = (operation: string) => {
+  switch (operation) {
+    case "create":
+      return "bg-green-100 text-green-800";
+    case "update":
+      return "bg-orange-100 text-orange-800";
+    case "delete":
+      return "bg-red-100 text-red-800";
+    default:
+      return "bg-gray-100 text-gray-800";
+  }
+};
+
+const getOperationLabel = (operation: string) => {
+  switch (operation) {
+    case "create":
+      return "NEW";
+    case "update":
+      return "MODIFIED";
+    case "delete":
+      return "DELETED";
+    default:
+      return "UNCHANGED";
+  }
 };
 
 const handleCommit = async () => {
   if (!canCommit.value) return;
 
+  const features: SpatialFeatureRequest[] = [];
+
+  // Add modified features
+  for (const featureId of modifiedFeatureIds.value) {
+    const feature = currentFeatures.value.find(
+      (f) => f.featureId === featureId
+    );
+    if (feature) {
+      features.push({
+        featureId: feature.featureId,
+        geometryType: feature.geometryType,
+        geometry: feature.geometry,
+        properties: feature.properties,
+        operation: FeatureOperation.UPDATE,
+      });
+    }
+  }
+
+  // Add deleted features
+  for (const featureId of deletedFeatureIds.value) {
+    const feature = originalFeatures.value.find(
+      (f) => f.featureId === featureId
+    );
+    if (feature) {
+      features.push({
+        featureId: feature.featureId,
+        geometryType: feature.geometryType,
+        geometry: feature.geometry,
+        properties: feature.properties,
+        operation: FeatureOperation.DELETE,
+      });
+    }
+  }
+
+  // Add new features
+  for (const feature of newFeatures.value) {
+    features.push({
+      featureId: feature.featureId,
+      geometryType: feature.geometryType,
+      geometry: feature.geometry,
+      properties: feature.properties,
+      operation: FeatureOperation.CREATE,
+    });
+  }
+
+  if (features.length === 0) {
+    alert("No changes to commit");
+    return;
+  }
+
   try {
     await spatialStore.createCommit({
       message: commitMessage.value,
       branchId,
-      features: features.value,
+      features,
     });
 
     alert("Commit created successfully!");
@@ -247,4 +802,19 @@ const handleCommit = async () => {
     alert(error.response?.data?.message || "Failed to create commit");
   }
 };
+
+const handleCancel = () => {
+  if (totalChanges.value > 0) {
+    if (
+      !confirm("You have unsaved changes. Are you sure you want to cancel?")
+    ) {
+      return;
+    }
+  }
+  router.back();
+};
+
+onMounted(() => {
+  loadCurrentFeatures();
+});
 </script>

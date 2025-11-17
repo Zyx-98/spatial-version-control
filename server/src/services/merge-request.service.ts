@@ -83,7 +83,7 @@ export class MergeRequestService {
       .leftJoinAndSelect('mr.createdBy', 'createdBy')
       .leftJoinAndSelect('mr.reviewedBy', 'reviewedBy')
       .where('dataset.departmentId = :departmentId', {
-        userId: user.departmentId,
+        departmentId: user.departmentId,
       })
       .orderBy('mr.createdAt', 'DESC')
       .getMany();
@@ -187,8 +187,9 @@ export class MergeRequestService {
 
     await this.spatialFeatureRepository.save(mergedFeatures);
 
-    targetBranch.headCommitId = savedMergeCommit.id;
-    await this.branchRepository.save(targetBranch);
+    await this.branchRepository.update(targetBranch.id, {
+      headCommitId: savedMergeCommit.id,
+    });
 
     mergeRequest.status = MergeRequestStatus.MERGED;
     mergeRequest.mergedAt = new Date();

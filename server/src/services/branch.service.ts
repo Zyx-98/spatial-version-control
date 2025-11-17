@@ -187,15 +187,30 @@ export class BranchService {
     return conflicts;
   }
 
+  /**
+   * Get the latest features by traversing commit history from the branch's head commit
+   * This properly handles new branches that inherit commits from their parent branch
+   */
   async getLatestFeatures(branchId: string): Promise<SpatialFeature[]> {
-    const commits = await this.commitRepository.find({
-      where: { branchId },
-      order: { createdAt: 'DESC' },
-      relations: { features: true },
+    const branch = await this.branchRepository.findOne({
+      where: { id: branchId },
     });
+
+    if (!branch) {
+      throw new NotFoundException('Branch not found');
+    }
+
+    // If branch has no head commit, return empty array
+    if (!branch.headCommitId) {
+      return [];
+    }
+
+    // Traverse commit history starting from head commit
+    const commits = await this.getCommitHistory(branch.headCommitId);
 
     const featureMap = new Map<string, SpatialFeature>();
 
+    // Process commits in chronological order (oldest first)
     for (const commit of commits.reverse()) {
       for (const feature of commit.features) {
         if (feature.operation === FeatureOperation.DELETE) {
@@ -207,6 +222,35 @@ export class BranchService {
     }
 
     return Array.from(featureMap.values());
+  }
+
+  /**
+   * Get commit history by traversing parent commit links
+   * Returns commits in reverse chronological order (newest first)
+   */
+  private async getCommitHistory(headCommitId: string): Promise<Commit[]> {
+    const commits: Commit[] = [];
+    let currentCommitId: string | null = headCommitId;
+
+    // Traverse up to 1000 commits to prevent infinite loops
+    let maxIterations = 1000;
+
+    while (currentCommitId && maxIterations > 0) {
+      const commit = await this.commitRepository.findOne({
+        where: { id: currentCommitId },
+        relations: { features: true },
+      });
+
+      if (!commit) {
+        break;
+      }
+
+      commits.push(commit);
+      currentCommitId = commit.parentCommitId;
+      maxIterations--;
+    }
+
+    return commits;
   }
 
   canEditBranch(branch: Branch, user: User): boolean {
