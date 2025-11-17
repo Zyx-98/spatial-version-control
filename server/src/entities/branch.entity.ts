@@ -24,6 +24,9 @@ export class Branch {
   @Column({ name: 'is_main', default: false })
   isMain: boolean;
 
+  @Column({ name: 'is_disabled', default: false })
+  isDisabled: boolean;
+
   @ManyToOne(() => Dataset, (dataset) => dataset.branches)
   @JoinColumn({ name: 'dataset_id' })
   dataset: Dataset;

@@ -459,6 +459,7 @@ const renderPermanentFeatures = () => {
           });
           break;
 
+        case "Line":
         case "LineString":
           const lineCoords = feature.geometry.coordinates.map(
             (c: number[]) => [c[1], c[0]] as L.LatLngExpression

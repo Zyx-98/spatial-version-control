@@ -48,6 +48,12 @@ export class MergeRequestService {
     const sourceBranch = await this.branchService.findOne(sourceBranchId, user);
     const targetBranch = await this.branchService.findOne(targetBranchId, user);
 
+    if (sourceBranch.isDisabled) {
+      throw new BadRequestException(
+        'Cannot create merge request from a disabled branch',
+      );
+    }
+
     if (!targetBranch.isMain) {
       throw new BadRequestException('Target branch must be the main branch');
     }
@@ -189,6 +195,11 @@ export class MergeRequestService {
 
     await this.branchRepository.update(targetBranch.id, {
       headCommitId: savedMergeCommit.id,
+    });
+
+    // Disable the source branch after successful merge
+    await this.branchRepository.update(sourceBranch.id, {
+      isDisabled: true,
     });
 
     mergeRequest.status = MergeRequestStatus.MERGED;

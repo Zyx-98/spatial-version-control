@@ -246,6 +246,11 @@ export class BranchService {
   }
 
   canEditBranch(branch: Branch, user: User): boolean {
+    // Disabled branches cannot be edited
+    if (branch.isDisabled) {
+      return false;
+    }
+
     if (branch.isMain) {
       return user.role === UserRole.ADMIN;
     }
