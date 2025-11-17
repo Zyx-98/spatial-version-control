@@ -62,6 +62,7 @@ export interface Branch {
   id: string;
   name: string;
   isMain: boolean;
+  isDisabled: boolean;
   datasetId: string;
   createdById: string;
   headCommitId?: string;
@@ -96,10 +97,10 @@ export interface BranchWithPermissions {
 // Spatial Feature Types
 export enum SpatialFeatureType {
   POINT = "Point",
-  LINE = "LineString",
+  LINE = "Line",
   POLYGON = "Polygon",
   MULTIPOINT = "MultiPoint",
-  MULTILINE = "MultiLineString",
+  MULTILINE = "MultiLine",
   MULTIPOLYGON = "MultiPolygon",
 }
 

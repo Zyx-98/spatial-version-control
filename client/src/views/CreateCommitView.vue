@@ -496,6 +496,12 @@ const handleToolChange = (tool: string) => {
   currentTool.value = tool as any;
 };
 
+const convertGeometryTypeForAPI = (geoJSONType: string): SpatialFeatureType => {
+  if (geoJSONType === "LineString") return SpatialFeatureType.LINE;
+  if (geoJSONType === "MultiLineString") return SpatialFeatureType.MULTILINE;
+  return geoJSONType as SpatialFeatureType;
+};
+
 const handleFeatureCreated = (geometry: any) => {
   try {
     const properties = newFeatureProperties.value.trim()
@@ -759,7 +765,7 @@ const handleCommit = async () => {
     if (feature) {
       features.push({
         featureId: feature.featureId,
-        geometryType: feature.geometryType,
+        geometryType: convertGeometryTypeForAPI(feature.geometryType),
         geometry: feature.geometry,
         properties: feature.properties,
         operation: FeatureOperation.UPDATE,
@@ -775,7 +781,7 @@ const handleCommit = async () => {
     if (feature) {
       features.push({
         featureId: feature.featureId,
-        geometryType: feature.geometryType,
+        geometryType: convertGeometryTypeForAPI(feature.geometryType),
         geometry: feature.geometry,
         properties: feature.properties,
         operation: FeatureOperation.DELETE,
@@ -787,7 +793,7 @@ const handleCommit = async () => {
   for (const feature of newFeatures.value) {
     features.push({
       featureId: feature.featureId,
-      geometryType: feature.geometryType,
+      geometryType: convertGeometryTypeForAPI(feature.geometryType),
       geometry: feature.geometry,
       properties: feature.properties,
       operation: FeatureOperation.CREATE,

@@ -35,11 +35,17 @@
               >
                 Main Branch
               </span>
+              <span
+                v-if="branch.isDisabled"
+                class="px-3 py-1 text-sm bg-red-100 text-red-800 rounded-full"
+              >
+                Disabled (Merged)
+              </span>
             </div>
           </div>
           <div class="flex space-x-3">
             <button
-              v-if="!branch.isMain"
+              v-if="!branch.isMain && !branch.isDisabled"
               @click="handleFetchMain"
               class="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
             >
@@ -57,12 +63,12 @@
               Create Commit
             </button>
             <button
-              v-if="!branch.isMain"
+              v-if="!branch.isMain && !branch.isDisabled"
               @click="handleCreateMergeRequest"
               :disabled="hasOpenMergeRequest"
               :class="[
                 'px-4 py-2 rounded-md',
-                hasOpenMergeRequest
+                hasOpenMergeRequest || branch.isDisabled
                   ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
                   : 'bg-green-600 text-white hover:bg-green-700',
               ]"

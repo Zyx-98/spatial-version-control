@@ -84,6 +84,7 @@ const renderFeatures = () => {
           bounds.push(L.latLngBounds([lat, lng], [lat, lng]));
           break;
 
+        case "Line":
         case "LineString":
           const lineCoords = coords.map(
             (c: number[]) => [c[1], c[0]] as L.LatLngExpression
