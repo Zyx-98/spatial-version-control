@@ -188,11 +188,19 @@ export class BranchService {
   }
 
   async getLatestFeatures(branchId: string): Promise<SpatialFeature[]> {
-    const commits = await this.commitRepository.find({
-      where: { branchId },
-      order: { createdAt: 'DESC' },
-      relations: { features: true },
+    const branch = await this.branchRepository.findOne({
+      where: { id: branchId },
     });
+
+    if (!branch) {
+      throw new NotFoundException('Branch not found');
+    }
+
+    if (!branch.headCommitId) {
+      return [];
+    }
+
+    const commits = await this.getCommitHistory(branch.headCommitId);
 
     const featureMap = new Map<string, SpatialFeature>();
 
@@ -207,6 +215,30 @@ export class BranchService {
     }
 
     return Array.from(featureMap.values());
+  }
+
+  private async getCommitHistory(headCommitId: string): Promise<Commit[]> {
+    const commits: Commit[] = [];
+    let currentCommitId: string | null = headCommitId;
+
+    let maxIterations = 1000;
+
+    while (currentCommitId && maxIterations > 0) {
+      const commit = await this.commitRepository.findOne({
+        where: { id: currentCommitId },
+        relations: { features: true },
+      });
+
+      if (!commit) {
+        break;
+      }
+
+      commits.push(commit);
+      currentCommitId = commit.parentCommitId;
+      maxIterations--;
+    }
+
+    return commits;
   }
 
   canEditBranch(branch: Branch, user: User): boolean {

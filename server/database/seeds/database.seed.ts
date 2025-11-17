@@ -23,17 +23,9 @@ async function seed() {
     console.log('✅ Database connection established');
 
     console.log('🗑️  Clearing existing data...');
-    await dataSource.createQueryBuilder().delete().from(MergeRequest).execute();
-    await dataSource
-      .createQueryBuilder()
-      .delete()
-      .from(SpatialFeature)
-      .execute();
-    await dataSource.createQueryBuilder().delete().from(Commit).execute();
-    await dataSource.createQueryBuilder().delete().from(Branch).execute();
-    await dataSource.createQueryBuilder().delete().from(Dataset).execute();
-    await dataSource.createQueryBuilder().delete().from(User).execute();
-    await dataSource.createQueryBuilder().delete().from(Department).execute();
+    await dataSource.query(
+      'TRUNCATE TABLE merge_requests, spatial_features, commits, branches, datasets, "users", departments CASCADE',
+    );
     console.log('✅ Existing data cleared');
 
     console.log('🏢 Creating departments...');
@@ -49,15 +41,15 @@ async function seed() {
 
     const adminUser = await dataSource.getRepository(User).save({
       username: 'admin',
-      email: 'admin@spatial-vc.com',
+      email: 'admin@spatial.com',
       password: hashedPassword,
       role: UserRole.ADMIN,
       departmentId: demoDept.id,
     });
 
     const normalUser = await dataSource.getRepository(User).save({
-      username: 'john_doe',
-      email: 'john.doe@spatial-vc.com',
+      username: 'user',
+      email: 'user@spatial.com',
       password: hashedPassword,
       role: UserRole.USER,
       departmentId: demoDept.id,
@@ -517,9 +509,9 @@ async function seed() {
     console.log('\n🔐 Login Credentials:');
     console.log('==================');
     console.log('Admin Users:');
-    console.log('  - username: admin, password: password123');
+    console.log('  - username: admin, password: secret123');
     console.log('\nUsers:');
-    console.log('  - username: john_doe, password: password123');
+    console.log('  - username: user, password: secret123');
     console.log('\n✅ Database seeding completed successfully!');
 
     await dataSource.destroy();

@@ -53,15 +53,16 @@ export class CommitService {
       });
 
       if (featureDto.geometry) {
-        feature.geom = this.geoJsonToPostGIS(featureDto.geometry);
+        feature.geom = featureDto.geometry;
       }
       return feature;
     });
 
     await this.spatialFeatureRepository.save(spatialFeatures);
 
-    branch.headCommitId = savedCommit.id;
-    await this.branchRepository.save(branch);
+    await this.branchRepository.update(branch.id, {
+      headCommitId: savedCommit.id,
+    });
 
     return savedCommit;
   }
@@ -117,9 +118,5 @@ export class CommitService {
     }
 
     return featureHistory;
-  }
-
-  private geoJsonToPostGIS(geometry: any): string {
-    return `SRID=4326;${JSON.stringify(geometry)}`;
   }
 }
