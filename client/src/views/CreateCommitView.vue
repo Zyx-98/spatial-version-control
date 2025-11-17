@@ -457,6 +457,16 @@ watch(newFeatureProperties, (newValue) => {
 const loadCurrentFeatures = async () => {
   try {
     loadingFeatures.value = true;
+
+    // Check permissions first
+    const permissionsResult =
+      await spatialStore.fetchBranchWithPermissions(branchId);
+    if (!permissionsResult.canEdit) {
+      alert("You do not have permission to edit this branch");
+      router.push(`/datasets/${datasetId}/branches/${branchId}`);
+      return;
+    }
+
     const features = await spatialStore.fetchLatestFeatures(branchId);
 
     originalFeatures.value = features.map((f) => ({
