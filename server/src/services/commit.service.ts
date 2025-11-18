@@ -119,4 +119,84 @@ export class CommitService {
 
     return featureHistory;
   }
+
+  async getCommitChanges(commitId: string) {
+    const commit = await this.findOne(commitId);
+
+    const changes = {
+      created: commit.features.filter((f) => f.operation === 'create'),
+      updated: commit.features.filter((f) => f.operation === 'update'),
+      deleted: commit.features.filter((f) => f.operation === 'delete'),
+      total: commit.features.length,
+    };
+
+    return {
+      commit: {
+        id: commit.id,
+        message: commit.message,
+        author: commit.author,
+        createdAt: commit.createdAt,
+      },
+      changes,
+    };
+  }
+
+  async compareBranches(sourceBranchId: string, targetBranchId: string) {
+    const sourceFeatures =
+      await this.branchService.getLatestFeatures(sourceBranchId);
+    const targetFeatures =
+      await this.branchService.getLatestFeatures(targetBranchId);
+
+    const sourceMap = new Map(sourceFeatures.map((f) => [f.featureId, f]));
+    const targetMap = new Map(targetFeatures.map((f) => [f.featureId, f]));
+
+    const comparison = {
+      added: [] as SpatialFeature[],
+      modified: [] as { source: SpatialFeature; target: SpatialFeature }[],
+      deleted: [] as SpatialFeature[],
+      unchanged: [] as SpatialFeature[],
+    };
+
+    // Check features in source branch
+    for (const [featureId, sourceFeature] of sourceMap) {
+      const targetFeature = targetMap.get(featureId);
+
+      if (!targetFeature) {
+        // Feature exists in source but not in target (added)
+        comparison.added.push(sourceFeature);
+      } else if (
+        JSON.stringify(sourceFeature.geometry) !==
+          JSON.stringify(targetFeature.geometry) ||
+        JSON.stringify(sourceFeature.properties) !==
+          JSON.stringify(targetFeature.properties)
+      ) {
+        // Feature modified (geometry or properties changed)
+        comparison.modified.push({
+          source: sourceFeature,
+          target: targetFeature,
+        });
+      } else {
+        comparison.unchanged.push(sourceFeature);
+      }
+    }
+
+    // Check for deleted features (in target but not in source)
+    for (const [featureId, targetFeature] of targetMap) {
+      if (!sourceMap.has(featureId)) {
+        comparison.deleted.push(targetFeature);
+      }
+    }
+
+    return {
+      sourceBranchId,
+      targetBranchId,
+      summary: {
+        added: comparison.added.length,
+        modified: comparison.modified.length,
+        deleted: comparison.deleted.length,
+        unchanged: comparison.unchanged.length,
+      },
+      changes: comparison,
+    };
+  }
 }

@@ -138,6 +138,26 @@
         </div>
       </div>
 
+      <!-- Branch Comparison -->
+      <div class="mb-6">
+        <div class="flex justify-between items-center mb-4">
+          <h2 class="text-xl font-semibold text-gray-900">Changes</h2>
+        </div>
+        <div v-if="loadingComparison" class="text-center py-12">
+          <div
+            class="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600"
+          ></div>
+          <p class="mt-4 text-gray-600">Loading comparison...</p>
+        </div>
+        <EnhancedBranchComparison
+          v-else-if="branchComparison"
+          :summary="branchComparison.summary"
+          :changes="branchComparison.changes"
+          :sourceLabel="mergeRequest.sourceBranch?.name || 'Source'"
+          :targetLabel="mergeRequest.targetBranch?.name || 'Target'"
+        />
+      </div>
+
       <!-- Review Info -->
       <div
         v-if="mergeRequest.reviewedBy"
@@ -251,7 +271,10 @@ import { useRoute, useRouter } from "vue-router";
 import { useAuthStore } from "@/stores/auth";
 import { useMergeRequestStore } from "@/stores/mergeRequest";
 import { MergeRequestStatus } from "@/types";
+import type { BranchComparison as BranchComparisonType } from "@/types";
 import { format } from "date-fns";
+import EnhancedBranchComparison from "@/components/EnhancedBranchComparison.vue";
+import api from "@/services/api";
 
 const route = useRoute();
 const router = useRouter();
@@ -265,6 +288,8 @@ const reviewComment = ref("");
 const resolutions = ref<
   Array<{ featureId: string; resolution: "use_main" | "use_branch" }>
 >([]);
+const branchComparison = ref<BranchComparisonType | null>(null);
+const loadingComparison = ref(false);
 
 const mergeRequest = computed(() => mergeRequestStore.currentMergeRequest);
 const conflicts = computed(() => mergeRequestStore.conflicts);
@@ -349,10 +374,28 @@ const loadMergeRequest = async () => {
     if (mergeRequest.value?.hasConflicts) {
       await mergeRequestStore.fetchConflicts(mergeRequestId);
     }
+    // Automatically load branch comparison
+    await loadBranchComparison();
   } catch (error) {
     console.error("Failed to load merge request:", error);
   } finally {
     loading.value = false;
+  }
+};
+
+const loadBranchComparison = async () => {
+  if (!mergeRequest.value) return;
+
+  loadingComparison.value = true;
+  try {
+    branchComparison.value = await api.compareBranches(
+      mergeRequest.value.sourceBranchId,
+      mergeRequest.value.targetBranchId
+    );
+  } catch (error) {
+    console.error("Failed to load branch comparison:", error);
+  } finally {
+    loadingComparison.value = false;
   }
 };
 

@@ -113,7 +113,8 @@
           <div
             v-for="commit in commits"
             :key="commit.id"
-            class="px-6 py-4 hover:bg-gray-50"
+            @click="viewCommitChanges(commit.id)"
+            class="px-6 py-4 hover:bg-gray-50 cursor-pointer"
           >
             <div class="flex justify-between items-start">
               <div>
@@ -126,8 +127,36 @@
                   <span>{{ commit.features?.length || 0 }} changes</span>
                 </div>
               </div>
+              <button
+                class="text-primary-600 hover:text-primary-800 text-sm font-medium"
+              >
+                View Changes
+              </button>
             </div>
           </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Commit Changes Modal -->
+    <div
+      v-if="showCommitChangesModal && selectedCommitChanges"
+      class="fixed inset-0 bg-gray-500 bg-opacity-75 flex items-center justify-center z-[1000]"
+    >
+      <div
+        class="bg-white rounded-lg max-w-5xl w-full max-h-[90vh] overflow-y-auto"
+      >
+        <EnhancedCommitChanges
+          :commit="selectedCommitChanges.commit"
+          :changes="selectedCommitChanges.changes"
+        />
+        <div class="p-4 border-t flex justify-end">
+          <button
+            @click="showCommitChangesModal = false"
+            class="px-4 py-2 bg-gray-600 text-white rounded-md hover:bg-gray-700"
+          >
+            Close
+          </button>
         </div>
       </div>
     </div>
@@ -186,6 +215,9 @@ import { useSpatialStore } from "@/stores/spatial";
 import { useMergeRequestStore } from "@/stores/mergeRequest";
 import { format } from "date-fns";
 import MapViewer from "@/components/MapViewer.vue";
+import EnhancedCommitChanges from "@/components/EnhancedCommitChanges.vue";
+import api from "@/services/api";
+import type { CommitChanges as CommitChangesType } from "@/types";
 
 const route = useRoute();
 const router = useRouter();
@@ -196,6 +228,8 @@ const datasetId = route.params.datasetId as string;
 const branchId = route.params.branchId as string;
 const loading = ref(false);
 const showConflictsModal = ref(false);
+const showCommitChangesModal = ref(false);
+const selectedCommitChanges = ref<CommitChangesType | null>(null);
 
 const branch = computed(() => spatialStore.currentBranch);
 const commits = computed(() => spatialStore.commits);
@@ -216,6 +250,15 @@ const handleFetchMain = async () => {
     showConflictsModal.value = true;
   } catch (error) {
     console.error("Failed to fetch main:", error);
+  }
+};
+
+const viewCommitChanges = async (commitId: string) => {
+  try {
+    selectedCommitChanges.value = await api.getCommitChanges(commitId);
+    showCommitChangesModal.value = true;
+  } catch (error) {
+    console.error("Failed to load commit changes:", error);
   }
 };
 

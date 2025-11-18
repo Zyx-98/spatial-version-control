@@ -45,4 +45,17 @@ export class CommitController {
   ) {
     return this.commitService.getFeatureHistory(branchId, featureId);
   }
+
+  @Get(':id/changes')
+  getCommitChanges(@Param('id') id: string) {
+    return this.commitService.getCommitChanges(id);
+  }
+
+  @Get('compare/:sourceBranchId/:targetBranchId')
+  compareBranches(
+    @Param('sourceBranchId') sourceBranchId: string,
+    @Param('targetBranchId') targetBranchId: string,
+  ) {
+    return this.commitService.compareBranches(sourceBranchId, targetBranchId);
+  }
 }
