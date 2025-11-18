@@ -4,7 +4,13 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Branch, Commit, SpatialFeature, User } from 'src/entities';
+import {
+  Branch,
+  Commit,
+  FeatureOperation,
+  SpatialFeature,
+  User,
+} from 'src/entities';
 import { Repository } from 'typeorm';
 import { BranchService } from './branch.service';
 import { CreateCommitDto } from 'src/dto/commit.dto';
@@ -118,5 +124,87 @@ export class CommitService {
     }
 
     return featureHistory;
+  }
+
+  async getCommitChanges(commitId: string) {
+    const commit = await this.findOne(commitId);
+
+    const changes = {
+      created: commit.features.filter(
+        (f) => f.operation === FeatureOperation.CREATE,
+      ),
+      updated: commit.features.filter(
+        (f) => f.operation === FeatureOperation.UPDATE,
+      ),
+      deleted: commit.features.filter(
+        (f) => f.operation === FeatureOperation.DELETE,
+      ),
+      total: commit.features.length,
+    };
+
+    return {
+      commit: {
+        id: commit.id,
+        message: commit.message,
+        author: commit.author,
+        createdAt: commit.createdAt,
+      },
+      changes,
+    };
+  }
+
+  async compareBranches(sourceBranchId: string, targetBranchId: string) {
+    const sourceFeatures =
+      await this.branchService.getLatestFeatures(sourceBranchId);
+    const targetFeatures =
+      await this.branchService.getLatestFeatures(targetBranchId);
+
+    const sourceMap = new Map(sourceFeatures.map((f) => [f.featureId, f]));
+    const targetMap = new Map(targetFeatures.map((f) => [f.featureId, f]));
+
+    const comparison = {
+      added: [] as SpatialFeature[],
+      modified: [] as { source: SpatialFeature; target: SpatialFeature }[],
+      deleted: [] as SpatialFeature[],
+      unchanged: [] as SpatialFeature[],
+    };
+
+    for (const [featureId, sourceFeature] of sourceMap) {
+      const targetFeature = targetMap.get(featureId);
+
+      if (!targetFeature) {
+        comparison.added.push(sourceFeature);
+      } else if (
+        JSON.stringify(sourceFeature.geometry) !==
+          JSON.stringify(targetFeature.geometry) ||
+        JSON.stringify(sourceFeature.properties) !==
+          JSON.stringify(targetFeature.properties)
+      ) {
+        comparison.modified.push({
+          source: sourceFeature,
+          target: targetFeature,
+        });
+      } else {
+        comparison.unchanged.push(sourceFeature);
+      }
+    }
+
+    for (const [featureId, targetFeature] of targetMap) {
+      if (!sourceMap.has(featureId)) {
+        comparison.deleted.push(targetFeature);
+      }
+    }
+
+    return {
+      sourceBranchId,
+      targetBranchId,
+      summary: {
+        added: comparison.added.length,
+        modified: comparison.modified.length,
+        deleted: comparison.deleted.length,
+        unchanged: comparison.unchanged.length,
+      },
+      changes: comparison,
+    };
   }
 }

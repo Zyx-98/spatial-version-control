@@ -11,6 +11,8 @@ import type {
   BranchWithPermissions,
   Commit,
   CreateCommitRequest,
+  CommitChanges,
+  BranchComparison,
   MergeRequest,
   CreateMergeRequestRequest,
   ReviewMergeRequestRequest,
@@ -161,6 +163,23 @@ class ApiService {
   ): Promise<SpatialFeature[]> {
     const response = await this.api.get<SpatialFeature[]>(
       `/commits/feature-history/${branchId}/${featureId}`
+    );
+    return response.data;
+  }
+
+  async getCommitChanges(commitId: string): Promise<CommitChanges> {
+    const response = await this.api.get<CommitChanges>(
+      `/commits/${commitId}/changes`
+    );
+    return response.data;
+  }
+
+  async compareBranches(
+    sourceBranchId: string,
+    targetBranchId: string
+  ): Promise<BranchComparison> {
+    const response = await this.api.get<BranchComparison>(
+      `/commits/compare/${sourceBranchId}/${targetBranchId}`
     );
     return response.data;
   }

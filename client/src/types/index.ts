@@ -98,6 +98,7 @@ export interface BranchWithPermissions {
 export enum SpatialFeatureType {
   POINT = "Point",
   LINE = "Line",
+  LINESTRING = "LineString",
   POLYGON = "Polygon",
   MULTIPOINT = "MultiPoint",
   MULTILINE = "MultiLine",
@@ -150,6 +151,38 @@ export interface CreateCommitRequest {
   message: string;
   branchId: string;
   features: SpatialFeatureRequest[];
+}
+
+export interface CommitChanges {
+  commit: {
+    id: string;
+    message: string;
+    author?: User;
+    createdAt: string;
+  };
+  changes: {
+    created: SpatialFeature[];
+    updated: SpatialFeature[];
+    deleted: SpatialFeature[];
+    total: number;
+  };
+}
+
+export interface BranchComparison {
+  sourceBranchId: string;
+  targetBranchId: string;
+  summary: {
+    added: number;
+    modified: number;
+    deleted: number;
+    unchanged: number;
+  };
+  changes: {
+    added: SpatialFeature[];
+    modified: { source: SpatialFeature; target: SpatialFeature }[];
+    deleted: SpatialFeature[];
+    unchanged: SpatialFeature[];
+  };
 }
 
 // Merge Request Types
