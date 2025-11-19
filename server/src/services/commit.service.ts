@@ -45,6 +45,58 @@ export class CommitService {
       );
     }
 
+    if (!branch.isMain) {
+      const mainBranch = await this.branchRepository.findOne({
+        where: {
+          datasetId: branch.datasetId,
+          isMain: true,
+        },
+      });
+
+      if (mainBranch) {
+        const conflicts = await this.branchService.detectConflicts(
+          branch,
+          mainBranch,
+        );
+
+        if (conflicts.length > 0) {
+          let hasUnresolvedConflicts = true;
+
+          if (branch.headCommitId) {
+            const latestCommit = await this.commitRepository.findOne({
+              where: { id: branch.headCommitId },
+            });
+
+            if (
+              latestCommit?.message.includes(
+                'Resolve conflicts with main branch',
+              )
+            ) {
+              const mainLastUpdated = new Date(
+                mainBranch.updatedAt || mainBranch.createdAt,
+              );
+              const resolutionTime = new Date(latestCommit.createdAt);
+
+              if (mainLastUpdated <= resolutionTime) {
+                hasUnresolvedConflicts = false;
+              }
+            }
+          }
+
+          if (hasUnresolvedConflicts) {
+            // Update the flag and throw error
+            await this.branchRepository.update(branchId, {
+              hasUnresolvedConflicts: true,
+            });
+
+            throw new ForbiddenException(
+              'Cannot create commit. This branch has conflicts with main. Please use "Fetch Main" to view and resolve conflicts first.',
+            );
+          }
+        }
+      }
+    }
+
     const commit = this.commitRepository.create({
       message,
       branchId,
