@@ -14,9 +14,8 @@ import {
   User,
   UserRole,
 } from 'src/entities';
-import { Repository } from 'typeorm';
+import { DataSource, Repository } from 'typeorm';
 import { BranchService } from './branch.service';
-import { CommitService } from './commit.service';
 import {
   CreateMergeRequestDto,
   ResolveMergeConflictsDto,
@@ -32,10 +31,8 @@ export class MergeRequestService {
     private branchRepository: Repository<Branch>,
     @InjectRepository(Commit)
     private commitRepository: Repository<Commit>,
-    @InjectRepository(SpatialFeature)
-    private spatialFeatureRepository: Repository<SpatialFeature>,
     private branchService: BranchService,
-    private commitService: CommitService,
+    private dataSource: DataSource,
   ) {}
 
   async create(
@@ -136,7 +133,6 @@ export class MergeRequestService {
       throw new NotFoundException('Access denied to this merge request');
     }
 
-    // Recheck if conflicts are still valid (in case they were resolved at branch level)
     if (
       mergeRequest.hasConflicts &&
       mergeRequest.status === MergeRequestStatus.OPEN &&
@@ -205,53 +201,70 @@ export class MergeRequestService {
   }
 
   async performMerge(mergeRequest: MergeRequest, user: User): Promise<void> {
-    const sourceBranch = await this.branchService.findOne(
-      mergeRequest.sourceBranchId,
-      user,
-    );
-    const targetBranch = await this.branchService.findOne(
-      mergeRequest.targetBranchId,
-      user,
-    );
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
 
-    const sourceFeatures = await this.branchService.getLatestFeatures(
-      sourceBranch.id,
-    );
+    try {
+      const sourceBranch = await this.branchService.findOne(
+        mergeRequest.sourceBranchId,
+        user,
+      );
+      const targetBranch = await this.branchService.findOne(
+        mergeRequest.targetBranchId,
+        user,
+      );
 
-    const mergeCommit = this.commitRepository.create({
-      message: `Merge branch '${sourceBranch.name}' into '${targetBranch.name}'`,
-      branchId: targetBranch.id,
-      authorId: user.id,
-      parentCommitId: targetBranch.headCommitId,
-    });
+      const sourceFeatures = await this.branchService.getLatestFeatures(
+        sourceBranch.id,
+      );
 
-    const savedMergeCommit = await this.commitRepository.save(mergeCommit);
-
-    const mergedFeatures = sourceFeatures.map((feature) => {
-      return this.spatialFeatureRepository.create({
-        featureId: feature.featureId,
-        geometryType: feature.geometryType,
-        geometry: feature.geometry,
-        geom: feature.geom,
-        properties: feature.properties,
-        operation: feature.operation,
-        commitId: savedMergeCommit.id,
+      const mergeCommit = queryRunner.manager.create(Commit, {
+        message: `Merge branch '${sourceBranch.name}' into '${targetBranch.name}'`,
+        branchId: targetBranch.id,
+        authorId: user.id,
+        parentCommitId: targetBranch.headCommitId,
       });
-    });
 
-    await this.spatialFeatureRepository.save(mergedFeatures);
+      const savedMergeCommit = await queryRunner.manager.save(mergeCommit);
 
-    // Update target branch head - use save() to trigger updatedAt
-    targetBranch.headCommitId = savedMergeCommit.id;
-    await this.branchRepository.save(targetBranch);
+      const mergedFeatures = sourceFeatures.map((feature) => {
+        return queryRunner.manager.create(SpatialFeature, {
+          featureId: feature.featureId,
+          geometryType: feature.geometryType,
+          geometry: feature.geometry,
+          geom: feature.geom,
+          properties: feature.properties,
+          operation: feature.operation,
+          commitId: savedMergeCommit.id,
+        });
+      });
 
-    // Disable the source branch after successful merge
-    sourceBranch.isDisabled = true;
-    await this.branchRepository.save(sourceBranch);
+      await queryRunner.manager.save(mergedFeatures);
 
-    mergeRequest.status = MergeRequestStatus.MERGED;
-    mergeRequest.mergedAt = new Date();
-    await this.mergeRequestRepository.save(mergeRequest);
+      targetBranch.headCommitId = savedMergeCommit.id;
+      delete (targetBranch as any).commits;
+      delete (targetBranch as any).dataset;
+      delete (targetBranch as any).createdBy;
+      await queryRunner.manager.save(targetBranch);
+
+      sourceBranch.isDisabled = true;
+      delete (sourceBranch as any).commits;
+      delete (sourceBranch as any).dataset;
+      delete (sourceBranch as any).createdBy;
+      await queryRunner.manager.save(sourceBranch);
+
+      mergeRequest.status = MergeRequestStatus.MERGED;
+      mergeRequest.mergedAt = new Date();
+      await queryRunner.manager.save(mergeRequest);
+
+      await queryRunner.commitTransaction();
+    } catch (error) {
+      await queryRunner.rollbackTransaction();
+      throw error;
+    } finally {
+      await queryRunner.release();
+    }
   }
 
   async resolveConflicts(
@@ -264,7 +277,7 @@ export class MergeRequestService {
       throw new BadRequestException('No conflicts to resolve');
     }
 
-    const resolvedConflicts = mergeRequest.conflicts.map((conflict) => {
+    const resolvedConflicts = mergeRequest.conflicts.map((conflict: any) => {
       const resolution = resolveDto.resolutions.find(
         (r) => r.featureId === conflict.featureId,
       );
@@ -280,90 +293,108 @@ export class MergeRequestService {
     });
 
     mergeRequest.conflicts = resolvedConflicts;
-    mergeRequest.hasConflicts = resolvedConflicts.some((c) => !c.resolved);
+    mergeRequest.hasConflicts = resolvedConflicts.some((c: any) => !c.resolved);
 
     if (!mergeRequest.hasConflicts) {
-      const sourceBranch = await this.branchService.findOne(
-        mergeRequest.sourceBranchId,
-        user,
-      );
-      const targetBranch = await this.branchService.findOne(
-        mergeRequest.targetBranchId,
-        user,
-      );
+      const queryRunner = this.dataSource.createQueryRunner();
+      await queryRunner.connect();
+      await queryRunner.startTransaction();
 
-      const branchFeatures = await this.branchService.getLatestFeatures(
-        sourceBranch.id,
-      );
-      const mainFeatures = await this.branchService.getLatestFeatures(
-        targetBranch.id,
-      );
+      try {
+        const sourceBranch = await this.branchService.findOne(
+          mergeRequest.sourceBranchId,
+          user,
+        );
+        const targetBranch = await this.branchService.findOne(
+          mergeRequest.targetBranchId,
+          user,
+        );
 
-      const branchFeatureMap = new Map(
-        branchFeatures.map((f) => [f.featureId, f]),
-      );
-      const mainFeatureMap = new Map(mainFeatures.map((f) => [f.featureId, f]));
+        const branchFeatures = await this.branchService.getLatestFeatures(
+          sourceBranch.id,
+        );
+        const mainFeatures = await this.branchService.getLatestFeatures(
+          targetBranch.id,
+        );
 
-      const resolvedFeatures: any[] = [];
+        const branchFeatureMap = new Map(
+          branchFeatures.map((f) => [f.featureId, f]),
+        );
+        const mainFeatureMap = new Map(
+          mainFeatures.map((f) => [f.featureId, f]),
+        );
 
-      for (const resolution of resolveDto.resolutions) {
-        const branchFeature = branchFeatureMap.get(resolution.featureId);
-        const mainFeature = mainFeatureMap.get(resolution.featureId);
+        const resolvedFeatures: any[] = [];
 
-        if (resolution.resolution === 'use_main' && mainFeature) {
-          resolvedFeatures.push({
-            featureId: mainFeature.featureId,
-            geometryType: mainFeature.geometryType,
-            geometry: mainFeature.geometry,
-            properties: mainFeature.properties,
-            operation: 'update',
-          });
-        } else if (resolution.resolution === 'use_branch' && branchFeature) {
-          resolvedFeatures.push({
-            featureId: branchFeature.featureId,
-            geometryType: branchFeature.geometryType,
-            geometry: branchFeature.geometry,
-            properties: branchFeature.properties,
-            operation: 'update',
-          });
+        for (const resolution of resolveDto.resolutions) {
+          const branchFeature = branchFeatureMap.get(resolution.featureId);
+          const mainFeature = mainFeatureMap.get(resolution.featureId);
+
+          if (resolution.resolution === 'use_main' && mainFeature) {
+            resolvedFeatures.push({
+              featureId: mainFeature.featureId,
+              geometryType: mainFeature.geometryType,
+              geometry: mainFeature.geometry,
+              properties: mainFeature.properties,
+              operation: 'update',
+            });
+          } else if (resolution.resolution === 'use_branch' && branchFeature) {
+            resolvedFeatures.push({
+              featureId: branchFeature.featureId,
+              geometryType: branchFeature.geometryType,
+              geometry: branchFeature.geometry,
+              properties: branchFeature.properties,
+              operation: 'update',
+            });
+          }
         }
-      }
 
-      const resolutionSummary = resolveDto.resolutions.map((r) => ({
-        featureId: r.featureId,
-        resolution: r.resolution,
-      }));
+        const resolutionSummary = resolveDto.resolutions.map((r) => ({
+          featureId: r.featureId,
+          resolution: r.resolution,
+        }));
 
-      const commit = this.commitRepository.create({
-        message: `Resolve conflicts with main branch\n\nResolutions:\n${resolutionSummary.map((r) => `- ${r.featureId}: ${r.resolution}`).join('\n')}`,
-        branchId: sourceBranch.id,
-        authorId: user.id,
-        parentCommitId: sourceBranch.headCommitId,
-      });
-
-      const savedCommit = await this.commitRepository.save(commit);
-
-      if (resolvedFeatures.length > 0) {
-        const featuresToSave = resolvedFeatures.map((featureDto) => {
-          return this.spatialFeatureRepository.create({
-            featureId: featureDto.featureId,
-            geometryType: featureDto.geometryType,
-            geometry: featureDto.geometry,
-            properties: featureDto.properties,
-            operation: featureDto.operation,
-            commitId: savedCommit.id,
-          });
+        const commit = queryRunner.manager.create(Commit, {
+          message: `Resolve conflicts with main branch\n\nResolutions:\n${resolutionSummary.map((r) => `- ${r.featureId}: ${r.resolution}`).join('\n')}`,
+          branchId: sourceBranch.id,
+          authorId: user.id,
+          parentCommitId: sourceBranch.headCommitId,
         });
 
-        await this.spatialFeatureRepository.save(featuresToSave);
-      }
+        const savedCommit = await queryRunner.manager.save(commit);
 
-      delete (sourceBranch as any).commits;
-      delete (sourceBranch as any).dataset;
-      delete (sourceBranch as any).createdBy;
-      sourceBranch.headCommitId = savedCommit.id;
-      sourceBranch.hasUnresolvedConflicts = false;
-      await this.branchRepository.save(sourceBranch);
+        if (resolvedFeatures.length > 0) {
+          const featuresToSave = resolvedFeatures.map((featureDto) => {
+            return queryRunner.manager.create(SpatialFeature, {
+              featureId: featureDto.featureId,
+              geometryType: featureDto.geometryType,
+              geometry: featureDto.geometry,
+              properties: featureDto.properties,
+              operation: featureDto.operation,
+              commitId: savedCommit.id,
+            });
+          });
+
+          await queryRunner.manager.save(featuresToSave);
+        }
+
+        delete (sourceBranch as any).commits;
+        delete (sourceBranch as any).dataset;
+        delete (sourceBranch as any).createdBy;
+        sourceBranch.headCommitId = savedCommit.id;
+        sourceBranch.hasUnresolvedConflicts = false;
+        await queryRunner.manager.save(sourceBranch);
+
+        await queryRunner.manager.save(mergeRequest);
+
+        await queryRunner.commitTransaction();
+        return mergeRequest;
+      } catch (error) {
+        await queryRunner.rollbackTransaction();
+        throw error;
+      } finally {
+        await queryRunner.release();
+      }
     }
 
     return this.mergeRequestRepository.save(mergeRequest);
