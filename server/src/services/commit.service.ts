@@ -84,7 +84,6 @@ export class CommitService {
           }
 
           if (hasUnresolvedConflicts) {
-            // Update the flag and throw error
             await this.branchRepository.update(branchId, {
               hasUnresolvedConflicts: true,
             });
