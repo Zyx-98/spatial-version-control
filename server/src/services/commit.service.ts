@@ -11,7 +11,7 @@ import {
   SpatialFeature,
   User,
 } from 'src/entities';
-import { Repository } from 'typeorm';
+import { DataSource, Repository } from 'typeorm';
 import { BranchService } from './branch.service';
 import { CreateCommitDto } from 'src/dto/commit.dto';
 import { v4 as uuidv4 } from 'uuid';
@@ -21,11 +21,10 @@ export class CommitService {
   constructor(
     @InjectRepository(Commit)
     private commitRepository: Repository<Commit>,
-    @InjectRepository(SpatialFeature)
-    private spatialFeatureRepository: Repository<SpatialFeature>,
     @InjectRepository(Branch)
     private branchRepository: Repository<Branch>,
     private branchService: BranchService,
+    private dataSource: DataSource,
   ) {}
 
   async create(createCommitDto: CreateCommitDto, user: User): Promise<Commit> {
@@ -96,38 +95,53 @@ export class CommitService {
       }
     }
 
-    const commit = this.commitRepository.create({
-      message,
-      branchId,
-      authorId: user.id,
-      parentCommitId: branch.headCommitId,
-    });
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
 
-    const savedCommit = await this.commitRepository.save(commit);
-
-    const spatialFeatures = features.map((featureDto) => {
-      const feature = this.spatialFeatureRepository.create({
-        featureId: featureDto.featureId || uuidv4(),
-        geometryType: featureDto.geometryType,
-        geometry: featureDto.geometry,
-        properties: featureDto.properties,
-        operation: featureDto.operation,
-        commitId: savedCommit.id,
+    try {
+      const commit = queryRunner.manager.create(Commit, {
+        message,
+        branchId,
+        authorId: user.id,
+        parentCommitId: branch.headCommitId,
       });
 
-      if (featureDto.geometry) {
-        feature.geom = featureDto.geometry;
-      }
-      return feature;
-    });
+      const savedCommit = await queryRunner.manager.save(commit);
 
-    await this.spatialFeatureRepository.save(spatialFeatures);
+      const spatialFeatures = features.map((featureDto) => {
+        const feature = queryRunner.manager.create(SpatialFeature, {
+          featureId: featureDto.featureId || uuidv4(),
+          geometryType: featureDto.geometryType,
+          geometry: featureDto.geometry,
+          properties: featureDto.properties,
+          operation: featureDto.operation,
+          commitId: savedCommit.id,
+        });
 
-    // Update branch head - use save() to trigger updatedAt
-    branch.headCommitId = savedCommit.id;
-    await this.branchRepository.save(branch);
+        if (featureDto.geometry) {
+          feature.geom = featureDto.geometry;
+        }
+        return feature;
+      });
 
-    return savedCommit;
+      await queryRunner.manager.save(spatialFeatures);
+
+      delete (branch as any).commits;
+      delete (branch as any).dataset;
+      delete (branch as any).createdBy;
+      branch.headCommitId = savedCommit.id;
+      await queryRunner.manager.save(branch);
+
+      await queryRunner.commitTransaction();
+
+      return savedCommit;
+    } catch (error) {
+      await queryRunner.rollbackTransaction();
+      throw error;
+    } finally {
+      await queryRunner.release();
+    }
   }
 
   findAll(branchId: string): Promise<Commit[]> {

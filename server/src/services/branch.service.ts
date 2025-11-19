@@ -20,7 +20,7 @@ import {
   User,
   UserRole,
 } from 'src/entities';
-import { In, Repository } from 'typeorm';
+import { DataSource, In, Repository } from 'typeorm';
 
 @Injectable()
 export class BranchService {
@@ -29,10 +29,9 @@ export class BranchService {
     private branchRepository: Repository<Branch>,
     @InjectRepository(Commit)
     private commitRepository: Repository<Commit>,
-    @InjectRepository(SpatialFeature)
-    private spatialFeatureRepository: Repository<SpatialFeature>,
     @InjectRepository(MergeRequest)
     private mergeRequestRepository: Repository<MergeRequest>,
+    private dataSource: DataSource,
   ) {}
 
   async create(createBranchDto: CreateBranchDto, user: User): Promise<Branch> {
@@ -130,7 +129,6 @@ export class BranchService {
 
     const conflicts = await this.detectConflicts(branch, mainBranch);
 
-    // Check if the latest commit is a conflict resolution commit
     let shouldMarkAsUnresolved = conflicts.length > 0;
 
     if (conflicts.length > 0 && branch.headCommitId) {
@@ -138,25 +136,20 @@ export class BranchService {
         where: { id: branch.headCommitId },
       });
 
-      // If the latest commit is a resolution commit, check if main has changed since
       if (
         latestCommit?.message.includes('Resolve conflicts with main branch')
       ) {
-        // Check if main branch has been updated since the resolution
         const mainLastUpdated = new Date(
           mainBranch.updatedAt || mainBranch.createdAt,
         );
         const resolutionTime = new Date(latestCommit.createdAt);
 
-        // If main hasn't changed since resolution, these aren't new conflicts
         if (mainLastUpdated <= resolutionTime) {
           shouldMarkAsUnresolved = false;
         }
-        // If main has changed, these are potentially new conflicts, keep as unresolved
       }
     }
 
-    // Update the branch's unresolved conflicts flag
     await this.branchRepository.update(branchId, {
       hasUnresolvedConflicts: shouldMarkAsUnresolved,
     });
@@ -278,7 +271,6 @@ export class BranchService {
   }
 
   canEditBranch(branch: Branch, user: User): boolean {
-    // Disabled branches cannot be edited
     if (branch.isDisabled) {
       return false;
     }
@@ -346,7 +338,6 @@ export class BranchService {
       );
     }
 
-    // Get the main branch to fetch resolved features from
     const mainBranch = await this.branchRepository.findOne({
       where: {
         datasetId: branch.datasetId,
@@ -358,17 +349,14 @@ export class BranchService {
       throw new NotFoundException('Main branch not found');
     }
 
-    // Get latest features from both branches
     const branchFeatures = await this.getLatestFeatures(branch.id);
     const mainFeatures = await this.getLatestFeatures(mainBranch.id);
 
-    // Create maps for easy lookup
     const branchFeatureMap = new Map(
       branchFeatures.map((f) => [f.featureId, f]),
     );
     const mainFeatureMap = new Map(mainFeatures.map((f) => [f.featureId, f]));
 
-    // Apply resolutions by creating a merge commit with resolved features
     const resolvedFeatures: any[] = [];
 
     for (const resolution of resolveDto.resolutions) {
@@ -376,7 +364,6 @@ export class BranchService {
       const mainFeature = mainFeatureMap.get(resolution.featureId);
 
       if (resolution.resolution === 'use_main' && mainFeature) {
-        // Use main branch version - update the feature in our branch
         resolvedFeatures.push({
           featureId: mainFeature.featureId,
           geometryType: mainFeature.geometryType,
@@ -396,50 +383,58 @@ export class BranchService {
       }
     }
 
-    // Always create a commit to mark that conflicts were resolved
-    const resolutionSummary = resolveDto.resolutions.map((r) => ({
-      featureId: r.featureId,
-      resolution: r.resolution,
-    }));
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
 
-    const commit = this.commitRepository.create({
-      message: `Resolve conflicts with main branch\n\nResolutions:\n${resolutionSummary.map((r) => `- ${r.featureId}: ${r.resolution}`).join('\n')}`,
-      branchId: branch.id,
-      authorId: user.id,
-      parentCommitId: branch.headCommitId,
-    });
+    try {
+      const resolutionSummary = resolveDto.resolutions.map((r) => ({
+        featureId: r.featureId,
+        resolution: r.resolution,
+      }));
 
-    const savedCommit = await this.commitRepository.save(commit);
-
-    // Save the resolved features (even if keeping branch version, we re-commit them)
-    if (resolvedFeatures.length > 0) {
-      const featuresToSave = resolvedFeatures.map((featureDto) => {
-        return this.spatialFeatureRepository.create({
-          featureId: featureDto.featureId,
-          geometryType: featureDto.geometryType,
-          geometry: featureDto.geometry,
-          properties: featureDto.properties,
-          operation: featureDto.operation,
-          commitId: savedCommit.id,
-        });
+      const commit = queryRunner.manager.create(Commit, {
+        message: `Resolve conflicts with main branch\n\nResolutions:\n${resolutionSummary.map((r) => `- ${r.featureId}: ${r.resolution}`).join('\n')}`,
+        branchId: branch.id,
+        authorId: user.id,
+        parentCommitId: branch.headCommitId,
       });
 
-      await this.spatialFeatureRepository.save(featuresToSave);
+      const savedCommit = await queryRunner.manager.save(commit);
+
+      if (resolvedFeatures.length > 0) {
+        const featuresToSave = resolvedFeatures.map((featureDto) => {
+          return queryRunner.manager.create(SpatialFeature, {
+            featureId: featureDto.featureId,
+            geometryType: featureDto.geometryType,
+            geometry: featureDto.geometry,
+            properties: featureDto.properties,
+            operation: featureDto.operation,
+            commitId: savedCommit.id,
+          });
+        });
+
+        await queryRunner.manager.save(featuresToSave);
+      }
+
+      delete (branch as any).commits;
+      delete (branch as any).dataset;
+      delete (branch as any).createdBy;
+      branch.headCommitId = savedCommit.id;
+      branch.hasUnresolvedConflicts = false;
+      await queryRunner.manager.save(branch);
+
+      await queryRunner.commitTransaction();
+
+      return {
+        success: true,
+        message: 'Conflicts resolved successfully',
+      };
+    } catch (error) {
+      await queryRunner.rollbackTransaction();
+      throw error;
+    } finally {
+      await queryRunner.release();
     }
-
-    // Update branch head and clear unresolved conflicts flag
-    // Use save() to trigger updatedAt timestamp
-    // Clear loaded relations to prevent cascade save issues
-    delete (branch as any).commits;
-    delete (branch as any).dataset;
-    delete (branch as any).createdBy;
-    branch.headCommitId = savedCommit.id;
-    branch.hasUnresolvedConflicts = false;
-    await this.branchRepository.save(branch);
-
-    return {
-      success: true,
-      message: 'Conflicts resolved successfully',
-    };
   }
 }
