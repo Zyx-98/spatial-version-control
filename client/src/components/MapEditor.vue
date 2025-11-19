@@ -303,7 +303,7 @@ const startEditingGeometry = () => {
     const [lng, lat] = feature.geometry.coordinates;
     const marker = createDraggableMarker([lat, lng], 0);
     editLayer.addLayer(marker);
-  } else if (geometryType === "LineString") {
+  } else if (geometryType === "LineString" || geometryType === "Line") {
     const coords = feature.geometry.coordinates;
     coords.forEach((coord: number[], index: number) => {
       const marker = createDraggableMarker([coord[1], coord[0]], index);
@@ -352,15 +352,16 @@ const updateEditPreview = () => {
   });
 
   const positions = editMarkers.map((m) => m.getLatLng());
+  const geometryType = editingFeature.value.geometryType;
 
-  if (editingFeature.value.geometryType === "LineString") {
+  if (geometryType === "LineString" || geometryType === "Line") {
     const line = L.polyline(positions, {
       color: "#3b82f6",
       weight: 3,
       opacity: 0.7,
     });
     editLayer?.addLayer(line);
-  } else if (editingFeature.value.geometryType === "Polygon") {
+  } else if (geometryType === "Polygon") {
     const polygon = L.polygon(positions, {
       fillColor: "#3b82f6",
       color: "#3b82f6",
@@ -376,14 +377,15 @@ const saveGeometryChanges = () => {
   if (!editingFeature.value || selectedFeatureIndex === null) return;
 
   let newGeometry: any;
+  const geometryType = editingFeature.value.geometryType;
 
-  if (editingFeature.value.geometryType === "Point") {
+  if (geometryType === "Point") {
     const latlng = editMarkers[0].getLatLng();
     newGeometry = {
       type: "Point",
       coordinates: [latlng.lng, latlng.lat],
     };
-  } else if (editingFeature.value.geometryType === "LineString") {
+  } else if (geometryType === "LineString" || geometryType === "Line") {
     const coordinates = editMarkers.map((m) => {
       const latlng = m.getLatLng();
       return [latlng.lng, latlng.lat];
@@ -392,7 +394,7 @@ const saveGeometryChanges = () => {
       type: "LineString",
       coordinates,
     };
-  } else if (editingFeature.value.geometryType === "Polygon") {
+  } else if (geometryType === "Polygon") {
     const coordinates = editMarkers.map((m) => {
       const latlng = m.getLatLng();
       return [latlng.lng, latlng.lat];
@@ -413,6 +415,7 @@ const cancelGeometryEdit = () => {
   editLayer?.clearLayers();
   editMarkers = [];
   editingFeature.value = null;
+  selectedFeatureIndex = null;
   emit("toolChange", "select");
   renderPermanentFeatures();
 };
