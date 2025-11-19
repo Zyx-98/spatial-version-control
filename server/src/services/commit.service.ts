@@ -84,7 +84,6 @@ export class CommitService {
           }
 
           if (hasUnresolvedConflicts) {
-            // Update the flag and throw error
             await this.branchRepository.update(branchId, {
               hasUnresolvedConflicts: true,
             });
@@ -227,12 +226,10 @@ export class CommitService {
       unchanged: [] as SpatialFeature[],
     };
 
-    // Check features in source branch
     for (const [featureId, sourceFeature] of sourceMap) {
       const targetFeature = targetMap.get(featureId);
 
       if (!targetFeature) {
-        // Feature exists in source but not in target (added)
         comparison.added.push(sourceFeature);
       } else if (
         JSON.stringify(sourceFeature.geometry) !==
@@ -240,7 +237,6 @@ export class CommitService {
         JSON.stringify(sourceFeature.properties) !==
           JSON.stringify(targetFeature.properties)
       ) {
-        // Feature modified (geometry or properties changed)
         comparison.modified.push({
           source: sourceFeature,
           target: targetFeature,

@@ -67,7 +67,6 @@ export class MergeRequestService {
       targetBranch,
     );
 
-    // Check if the source branch's latest commit is a conflict resolution commit
     let hasUnresolvedConflicts = conflictData.length > 0;
 
     if (conflictData.length > 0 && sourceBranch.headCommitId) {
@@ -75,21 +74,17 @@ export class MergeRequestService {
         where: { id: sourceBranch.headCommitId },
       });
 
-      // If the latest commit is a resolution commit, check if target has changed since
       if (
         latestCommit?.message.includes('Resolve conflicts with main branch')
       ) {
-        // Check if target branch has been updated since the resolution
         const targetLastUpdated = new Date(
           targetBranch.updatedAt || targetBranch.createdAt,
         );
         const resolutionTime = new Date(latestCommit.createdAt);
 
-        // If target hasn't changed since resolution, conflicts are resolved
         if (targetLastUpdated <= resolutionTime) {
           hasUnresolvedConflicts = false;
         }
-        // If target has changed, these are new conflicts that need resolution
       }
     }
 
@@ -151,7 +146,6 @@ export class MergeRequestService {
         where: { id: mergeRequest.sourceBranch.headCommitId },
       });
 
-      // If the latest commit is a resolution commit, check if target has changed since
       if (
         latestCommit?.message.includes('Resolve conflicts with main branch')
       ) {
@@ -161,7 +155,6 @@ export class MergeRequestService {
         );
         const resolutionTime = new Date(latestCommit.createdAt);
 
-        // If target hasn't changed since resolution, conflicts are resolved
         if (targetLastUpdated <= resolutionTime) {
           mergeRequest.hasConflicts = false;
           mergeRequest.conflicts = [];
@@ -289,11 +282,88 @@ export class MergeRequestService {
     mergeRequest.conflicts = resolvedConflicts;
     mergeRequest.hasConflicts = resolvedConflicts.some((c) => !c.resolved);
 
-    // Clear the unresolved conflicts flag on the source branch if all conflicts are resolved
     if (!mergeRequest.hasConflicts) {
-      await this.branchRepository.update(mergeRequest.sourceBranchId, {
-        hasUnresolvedConflicts: false,
+      const sourceBranch = await this.branchService.findOne(
+        mergeRequest.sourceBranchId,
+        user,
+      );
+      const targetBranch = await this.branchService.findOne(
+        mergeRequest.targetBranchId,
+        user,
+      );
+
+      const branchFeatures = await this.branchService.getLatestFeatures(
+        sourceBranch.id,
+      );
+      const mainFeatures = await this.branchService.getLatestFeatures(
+        targetBranch.id,
+      );
+
+      const branchFeatureMap = new Map(
+        branchFeatures.map((f) => [f.featureId, f]),
+      );
+      const mainFeatureMap = new Map(mainFeatures.map((f) => [f.featureId, f]));
+
+      const resolvedFeatures: any[] = [];
+
+      for (const resolution of resolveDto.resolutions) {
+        const branchFeature = branchFeatureMap.get(resolution.featureId);
+        const mainFeature = mainFeatureMap.get(resolution.featureId);
+
+        if (resolution.resolution === 'use_main' && mainFeature) {
+          resolvedFeatures.push({
+            featureId: mainFeature.featureId,
+            geometryType: mainFeature.geometryType,
+            geometry: mainFeature.geometry,
+            properties: mainFeature.properties,
+            operation: 'update',
+          });
+        } else if (resolution.resolution === 'use_branch' && branchFeature) {
+          resolvedFeatures.push({
+            featureId: branchFeature.featureId,
+            geometryType: branchFeature.geometryType,
+            geometry: branchFeature.geometry,
+            properties: branchFeature.properties,
+            operation: 'update',
+          });
+        }
+      }
+
+      const resolutionSummary = resolveDto.resolutions.map((r) => ({
+        featureId: r.featureId,
+        resolution: r.resolution,
+      }));
+
+      const commit = this.commitRepository.create({
+        message: `Resolve conflicts with main branch\n\nResolutions:\n${resolutionSummary.map((r) => `- ${r.featureId}: ${r.resolution}`).join('\n')}`,
+        branchId: sourceBranch.id,
+        authorId: user.id,
+        parentCommitId: sourceBranch.headCommitId,
       });
+
+      const savedCommit = await this.commitRepository.save(commit);
+
+      if (resolvedFeatures.length > 0) {
+        const featuresToSave = resolvedFeatures.map((featureDto) => {
+          return this.spatialFeatureRepository.create({
+            featureId: featureDto.featureId,
+            geometryType: featureDto.geometryType,
+            geometry: featureDto.geometry,
+            properties: featureDto.properties,
+            operation: featureDto.operation,
+            commitId: savedCommit.id,
+          });
+        });
+
+        await this.spatialFeatureRepository.save(featuresToSave);
+      }
+
+      delete (sourceBranch as any).commits;
+      delete (sourceBranch as any).dataset;
+      delete (sourceBranch as any).createdBy;
+      sourceBranch.headCommitId = savedCommit.id;
+      sourceBranch.hasUnresolvedConflicts = false;
+      await this.branchRepository.save(sourceBranch);
     }
 
     return this.mergeRequestRepository.save(mergeRequest);
