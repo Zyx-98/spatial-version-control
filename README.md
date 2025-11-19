@@ -23,6 +23,8 @@
   - [Working with Branches](#working-with-branches)
   - [Creating Merge Requests](#creating-merge-requests)
   - [Resolving Conflicts](#resolving-conflicts)
+    - [Branch-Level Resolution (Recommended)](#branch-level-resolution-recommended)
+    - [Merge Request-Level Resolution](#merge-request-level-resolution)
 - [API Documentation](#api-documentation)
   - [Authentication](#authentication)
   - [Datasets](#datasets)
@@ -39,6 +41,7 @@
   - [Branch detail](#branch-detail)
   - [Commit detail](#commit-detail)
   - [Merge request detail](#merge-request-detail)
+  - [Resolve merge conflicts](#resolve-merge-conflicts)
 - [TODO](#todo)
 - [License](#license)
 - [Acknowledgments](#acknowledgments)
@@ -96,14 +99,20 @@ Designed for **high scalability**, the system uses:
 - **Department Isolation**: Each department has isolated datasets for multi-tenancy
 - **Conflict Detection**: Automatic detection of geometry and property conflicts
 - **Git-like Visual Diff**:
-  - Side-by-side map comparison
-  - Synchronized map navigation
-  - Property-level diff with +/- indicators
-  - Geometry change visualization
-  - Coordinate count summaries
+  - Side-by-side map comparison with synchronized navigation
+  - Property-level diff with git-style `---/+++` format
+  - Coordinate-level geometry diff with line numbers
+  - Diff statistics (additions, deletions)
+  - Color-coded changes (red for removed, green for added)
+- **Branch-Level Conflict Resolution**:
+  - Resolve conflicts directly from branch view via "Fetch Main"
+  - Resolution commits track all conflict decisions
+  - Prevents commits when unresolved conflicts exist
+  - Timestamp-based staleness detection
 - **Change Statistics**: Detailed breakdown of additions, modifications, and deletions
 - **Merge Request Prevention**: Prevents duplicate merge requests from the same branch
 - **Interactive Highlighting**: Hover over changes to highlight on map
+- **ACID Compliance**: All critical operations wrapped in database transactions
 
 
 <a name="installation"></a>
@@ -252,12 +261,34 @@ docker-compose logs -f [service-name]
 
 ### Resolving Conflicts
 
-If conflicts are detected:
+Conflicts can be resolved at two levels:
 
+#### Branch-Level Resolution (Recommended)
+1. **Fetch Main Branch:**
+   - Navigate to your branch detail page
+   - Click "Fetch Main" button
+   - System detects conflicts with main branch
+
+2. **Review Conflicts:**
+   - Git-style diff view shows property changes (`---/+++` format)
+   - Side-by-side map comparison for geometry changes
+   - Coordinate-level diff with line numbers
+
+3. **Resolve Each Conflict:**
+   - **Use Main**: Keep the main branch version
+   - **Use Branch**: Keep your branch version
+   - Click "Save Resolutions"
+
+4. **Continue Working:**
+   - Resolution creates a special commit tracking decisions
+   - You can now create new commits
+   - Conflicts won't reappear unless main changes again
+
+#### Merge Request-Level Resolution
 1. **View Conflicts:**
    - Navigate to your merge request
    - Click "View Conflicts" button
-   - Review each conflicting feature with side-by-side comparison
+   - Same git-style diff view as branch-level
 
 2. **Resolution Options:**
    - **Use Main**: Keep the main branch version
@@ -266,8 +297,11 @@ If conflicts are detected:
 
 3. **Save Resolutions:**
    - Click "Save Resolutions" after resolving all conflicts
-   - Merge request will be updated
+   - Creates resolution commit on source branch
+   - Merge request is updated
    - Admin can now approve the merge
+
+**Note:** The system uses timestamp-based staleness detection. If the main branch is updated after you resolve conflicts, you'll need to resolve again.
 
 
 <a name="api-documentation"></a>
@@ -395,13 +429,16 @@ Error responses:
 ![datasets](/screenshots/dataset_screenshot.png)
 
 ### Branch detail
-![branch_detail](/screenshots/branch_detail_screenshot.png)]
+![branch_detail](/screenshots/branch_detail_screenshot.png)
 
 ### Commit detail
 ![commit_detail](/screenshots/commit_view_screenshot.png)
 
 ### Merge request detail
 ![merge_request_detail](/screenshots/merge_request_detail_screenshot.png)
+
+### Resolve merge conflicts
+![resolve_merge_conflicts](/screenshots/resolve_merge_conflict_screenshot.png)
 
 <a name="todo"></a>
 
