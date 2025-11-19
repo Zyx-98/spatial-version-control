@@ -39,6 +39,12 @@ export class CommitService {
       );
     }
 
+    if (branch.hasUnresolvedConflicts) {
+      throw new ForbiddenException(
+        'Cannot create commit. This branch has unresolved conflicts with main. Please resolve conflicts first.',
+      );
+    }
+
     const commit = this.commitRepository.create({
       message,
       branchId,
@@ -66,9 +72,9 @@ export class CommitService {
 
     await this.spatialFeatureRepository.save(spatialFeatures);
 
-    await this.branchRepository.update(branch.id, {
-      headCommitId: savedCommit.id,
-    });
+    // Update branch head - use save() to trigger updatedAt
+    branch.headCommitId = savedCommit.id;
+    await this.branchRepository.save(branch);
 
     return savedCommit;
   }

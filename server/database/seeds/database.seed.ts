@@ -224,6 +224,36 @@ async function seed() {
 
     console.log('Created 1 commit with 6 spatial features (all types)');
 
+    console.log('Creating second commit on main branch...');
+    const mainSecondCommit = await dataSource.getRepository(Commit).save({
+      message: 'Update City Hall status to under construction',
+      branchId: mainBranch.id,
+      authorId: adminUser.id,
+      parentCommitId: initialCommit.id,
+    });
+
+    await dataSource.getRepository(SpatialFeature).save([
+      {
+        featureId: 'point-001',
+        geometryType: SpatialFeatureType.POINT,
+        geometry: { type: 'Point', coordinates: [-122.4194, 37.7749] },
+        properties: {
+          name: 'City Hall',
+          type: 'landmark',
+          importance: 'high',
+          status: 'under_construction',
+          construction_year: 2024,
+        },
+        operation: FeatureOperation.UPDATE,
+        commitId: mainSecondCommit.id,
+      },
+    ]);
+
+    mainBranch.headCommitId = mainSecondCommit.id;
+    await dataSource.getRepository(Branch).save(mainBranch);
+
+    console.log('Created second commit on main branch');
+
     console.log('Creating feature branch...');
     const featureBranch = await dataSource.getRepository(Branch).save({
       name: 'feature/update-features',
@@ -284,19 +314,50 @@ async function seed() {
 
     console.log('Created 1 feature branch with 1 commit');
 
-    console.log('Creating merge request...');
+    console.log('Creating merge request with conflicts...');
+    const conflictsData = [
+      {
+        featureId: 'point-001',
+        conflictType: 'MODIFY_MODIFY',
+        mainVersion: {
+          featureId: 'point-001',
+          geometryType: 'Point',
+          geometry: { type: 'Point', coordinates: [-122.4194, 37.7749] },
+          properties: {
+            name: 'City Hall',
+            type: 'landmark',
+            importance: 'high',
+            status: 'under_construction',
+            construction_year: 2024,
+          },
+        },
+        branchVersion: {
+          featureId: 'point-001',
+          geometryType: 'Point',
+          geometry: { type: 'Point', coordinates: [-122.4194, 37.7749] },
+          properties: {
+            name: 'City Hall',
+            type: 'landmark',
+            importance: 'critical',
+            renovated: 2024,
+          },
+        },
+      },
+    ];
+
     await dataSource.getRepository(MergeRequest).save({
       title: 'Update City Hall and add new commercial zone',
       description:
-        'This PR updates City Hall properties to mark it as critical and adds a new commercial zone polygon.',
+        'This PR updates City Hall properties to mark it as critical and adds a new commercial zone polygon. WARNING: This will have conflicts with main branch changes.',
       sourceBranchId: featureBranch.id,
       targetBranchId: mainBranch.id,
       createdById: normalUser.id,
       status: MergeRequestStatus.OPEN,
-      hasConflicts: false,
+      hasConflicts: true,
+      conflicts: conflictsData,
     });
 
-    console.log('Created 1 merge request');
+    console.log('Created 1 merge request with conflicts data');
 
     console.log('Creating additional datasets...');
 
@@ -358,6 +419,185 @@ async function seed() {
 
     transportMainBranch.headCommitId = transportCommit.id;
     await dataSource.getRepository(Branch).save(transportMainBranch);
+
+    // Add second scenario: Geometry/Feature conflict on Transportation dataset
+    console.log('Creating feature conflict scenario...');
+
+    // Main branch updates highway geometry
+    const transportMainUpdate = await dataSource.getRepository(Commit).save({
+      message: 'Adjust highway route for new construction',
+      branchId: transportMainBranch.id,
+      authorId: adminUser.id,
+      parentCommitId: transportCommit.id,
+    });
+
+    await dataSource.getRepository(SpatialFeature).save([
+      {
+        featureId: 'highway-001',
+        geometryType: SpatialFeatureType.MULTI_LINE,
+        geometry: {
+          type: 'MultiLineString',
+          coordinates: [
+            [
+              [-122.45, 37.76],
+              [-122.445, 37.765], // Changed coordinates
+              [-122.44, 37.77],
+              [-122.43, 37.78],
+            ],
+            [
+              [-122.43, 37.78],
+              [-122.42, 37.79],
+              [-122.41, 37.8],
+            ],
+          ],
+        },
+        properties: { name: 'I-80 Corridor', lanes: 6, speed_limit: 65 },
+        operation: FeatureOperation.UPDATE,
+        commitId: transportMainUpdate.id,
+      },
+      {
+        featureId: 'exit-ramp-001',
+        geometryType: SpatialFeatureType.LINE,
+        geometry: {
+          type: 'LineString',
+          coordinates: [
+            [-122.43, 37.78],
+            [-122.435, 37.782],
+            [-122.44, 37.784],
+          ],
+        },
+        properties: { name: 'Exit 42 Ramp', type: 'exit_ramp' },
+        operation: FeatureOperation.CREATE,
+        commitId: transportMainUpdate.id,
+      },
+    ]);
+
+    transportMainBranch.headCommitId = transportMainUpdate.id;
+    await dataSource.getRepository(Branch).save(transportMainBranch);
+
+    // Feature branch also updates highway with different geometry
+    const transportFeatureBranch = await dataSource.getRepository(Branch).save({
+      name: 'feature/highway-expansion',
+      isMain: false,
+      datasetId: transportDataset.id,
+      createdById: normalUser.id,
+      headCommitId: transportCommit.id, // Branched before main's update
+    });
+
+    const transportFeatureCommit = await dataSource.getRepository(Commit).save({
+      message: 'Expand highway to 8 lanes',
+      branchId: transportFeatureBranch.id,
+      authorId: normalUser.id,
+      parentCommitId: transportCommit.id,
+    });
+
+    await dataSource.getRepository(SpatialFeature).save([
+      {
+        featureId: 'highway-001',
+        geometryType: SpatialFeatureType.MULTI_LINE,
+        geometry: {
+          type: 'MultiLineString',
+          coordinates: [
+            [
+              [-122.45, 37.76],
+              [-122.44, 37.77],
+              [-122.435, 37.775], // Different path
+              [-122.43, 37.78],
+            ],
+            [
+              [-122.43, 37.78],
+              [-122.42, 37.79],
+              [-122.41, 37.8],
+            ],
+          ],
+        },
+        properties: { name: 'I-80 Corridor', lanes: 8, speed_limit: 70 }, // Different properties
+        operation: FeatureOperation.UPDATE,
+        commitId: transportFeatureCommit.id,
+      },
+      {
+        featureId: 'service-road-001',
+        geometryType: SpatialFeatureType.LINE,
+        geometry: {
+          type: 'LineString',
+          coordinates: [
+            [-122.43, 37.78],
+            [-122.425, 37.781],
+            [-122.42, 37.782],
+          ],
+        },
+        properties: { name: 'Service Road', type: 'service' },
+        operation: FeatureOperation.CREATE,
+        commitId: transportFeatureCommit.id,
+      },
+    ]);
+
+    transportFeatureBranch.headCommitId = transportFeatureCommit.id;
+    await dataSource.getRepository(Branch).save(transportFeatureBranch);
+
+    // Create merge request with geometry and feature conflicts
+    const geometryConflictsData = [
+      {
+        featureId: 'highway-001',
+        conflictType: 'MODIFY_MODIFY',
+        mainVersion: {
+          featureId: 'highway-001',
+          geometryType: 'MultiLine',
+          geometry: {
+            type: 'MultiLineString',
+            coordinates: [
+              [
+                [-122.45, 37.76],
+                [-122.445, 37.765],
+                [-122.44, 37.77],
+                [-122.43, 37.78],
+              ],
+              [
+                [-122.43, 37.78],
+                [-122.42, 37.79],
+                [-122.41, 37.8],
+              ],
+            ],
+          },
+          properties: { name: 'I-80 Corridor', lanes: 6, speed_limit: 65 },
+        },
+        branchVersion: {
+          featureId: 'highway-001',
+          geometryType: 'MultiLine',
+          geometry: {
+            type: 'MultiLineString',
+            coordinates: [
+              [
+                [-122.45, 37.76],
+                [-122.44, 37.77],
+                [-122.435, 37.775],
+                [-122.43, 37.78],
+              ],
+              [
+                [-122.43, 37.78],
+                [-122.42, 37.79],
+                [-122.41, 37.8],
+              ],
+            ],
+          },
+          properties: { name: 'I-80 Corridor', lanes: 8, speed_limit: 70 },
+        },
+      },
+    ];
+
+    await dataSource.getRepository(MergeRequest).save({
+      title: 'Highway expansion to 8 lanes',
+      description:
+        'Expands I-80 corridor from 6 to 8 lanes with updated geometry. Conflicts: Main branch adjusted route, feature branch expanded lanes.',
+      sourceBranchId: transportFeatureBranch.id,
+      targetBranchId: transportMainBranch.id,
+      createdById: normalUser.id,
+      status: MergeRequestStatus.OPEN,
+      hasConflicts: true,
+      conflicts: geometryConflictsData,
+    });
+
+    console.log('Created geometry conflict scenario');
 
     // Dataset 3: Water Infrastructure
     const waterDataset = await dataSource.getRepository(Dataset).save({
@@ -928,10 +1168,22 @@ async function seed() {
     console.log('Users: 2 (1 admin, 1 user)');
     console.log('Datasets: 11');
     console.log('Main Branches: 11');
-    console.log('Feature Branches: 1');
-    console.log('Commits: 12');
-    console.log('Spatial Features: 32');
-    console.log('Merge Requests: 1');
+    console.log('Feature Branches: 2');
+    console.log('Commits: 16 (includes 2 conflict scenarios)');
+    console.log('Spatial Features: 39');
+    console.log('Merge Requests: 2 (both with conflicts)');
+    console.log('\nConflict Scenarios:');
+    console.log('==================');
+    console.log('1. Property Conflict (All Feature Types Demo):');
+    console.log('   - Main: City Hall with status="under_construction"');
+    console.log('   - Feature: City Hall with importance="critical"');
+    console.log('   - Conflict on properties only, same geometry');
+    console.log('\n2. Geometry & Feature Conflict (Transportation Network):');
+    console.log('   - Main: Highway route adjusted + Exit ramp added');
+    console.log(
+      '   - Feature: Highway expanded to 8 lanes + Service road added',
+    );
+    console.log('   - Conflicts on both geometry and properties');
     console.log('\nLogin Credentials:');
     console.log('==================');
     console.log('Admin: username: admin, password: secret123');

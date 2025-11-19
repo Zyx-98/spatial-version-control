@@ -1,4 +1,13 @@
-import { IsNotEmpty, IsString, IsUUID } from 'class-validator';
+import {
+  IsNotEmpty,
+  IsString,
+  IsUUID,
+  IsArray,
+  ValidateNested,
+  IsIn,
+  IsOptional,
+} from 'class-validator';
+import { Type } from 'class-transformer';
 
 export class CreateBranchDto {
   @IsString()
@@ -26,4 +35,25 @@ export class ConflictDetail {
   mainVersion: any;
   branchVersion: any;
   conflictType: 'modified' | 'deleted' | 'both_modified';
+}
+
+export class ConflictResolutionDto {
+  @IsString()
+  @IsNotEmpty()
+  featureId: string;
+
+  @IsIn(['use_main', 'use_branch'])
+  @IsNotEmpty()
+  resolution: 'use_main' | 'use_branch';
+}
+
+export class ResolveBranchConflictsDto {
+  @IsOptional()
+  @IsUUID()
+  branchId?: string;
+
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ConflictResolutionDto)
+  resolutions: ConflictResolutionDto[];
 }

@@ -150,12 +150,18 @@
           <p class="mt-4 text-gray-600">Loading comparison...</p>
         </div>
         <EnhancedBranchComparison
-          v-else-if="branchComparison"
+          v-else-if="branchComparison && mergeRequest"
           :summary="branchComparison.summary"
           :changes="branchComparison.changes"
           :sourceLabel="mergeRequest.sourceBranch?.name || 'Source'"
           :targetLabel="mergeRequest.targetBranch?.name || 'Target'"
         />
+        <div
+          v-else-if="!loadingComparison"
+          class="text-center py-8 text-gray-500"
+        >
+          No comparison data available
+        </div>
       </div>
 
       <!-- Review Info -->
@@ -181,84 +187,306 @@
       </div>
     </div>
 
-    <!-- Conflicts Modal -->
+    <!-- Enhanced Conflicts Modal -->
     <div
       v-if="showConflictsModal"
-      class="fixed inset-0 bg-gray-500 bg-opacity-75 flex items-center justify-center z-50"
+      class="fixed inset-0 bg-gray-900 bg-opacity-50 flex items-center justify-center z-[1000] p-4"
     >
       <div
-        class="bg-white rounded-lg p-6 max-w-4xl w-full max-h-[80vh] overflow-y-auto"
+        class="bg-white rounded-xl shadow-2xl max-w-6xl w-full max-h-[90vh] overflow-hidden flex flex-col"
       >
-        <h2 class="text-2xl font-bold mb-4">Merge Conflicts</h2>
-
-        <div v-if="conflicts && conflicts.hasConflicts" class="space-y-4">
-          <div
-            v-for="(conflict, index) in conflicts.conflicts"
-            :key="index"
-            class="border border-red-200 rounded-lg p-4 bg-red-50"
-          >
-            <div class="flex justify-between items-start mb-3">
-              <div>
-                <p class="font-medium text-red-900">
-                  Feature ID: {{ conflict.featureId }}
-                </p>
-                <p class="text-sm text-red-700">
-                  Type: {{ conflict.conflictType }}
-                </p>
-              </div>
+        <!-- Modal Header -->
+        <div class="bg-red-600 text-white px-6 py-4">
+          <div class="flex items-center justify-between">
+            <div>
+              <h2 class="text-2xl font-bold">Resolve Merge Conflicts</h2>
+              <p class="text-red-100 text-sm mt-1">
+                {{ conflicts?.conflicts.length || 0 }} conflict(s) detected -
+                {{ resolutions.length }} resolved
+              </p>
             </div>
-
-            <div class="grid grid-cols-2 gap-4 mt-4">
-              <div class="bg-white rounded p-3">
-                <h4 class="font-medium text-sm text-gray-700 mb-2">
-                  Main Branch Version
-                </h4>
-                <pre class="text-xs bg-gray-50 p-2 rounded overflow-auto">{{
-                  JSON.stringify(conflict.mainVersion, null, 2)
-                }}</pre>
-              </div>
-              <div class="bg-white rounded p-3">
-                <h4 class="font-medium text-sm text-gray-700 mb-2">
-                  Feature Branch Version
-                </h4>
-                <pre class="text-xs bg-gray-50 p-2 rounded overflow-auto">{{
-                  JSON.stringify(conflict.branchVersion, null, 2)
-                }}</pre>
-              </div>
-            </div>
-
-            <div class="mt-3 flex space-x-2">
-              <button
-                @click="resolveConflict(conflict.featureId, 'use_main')"
-                class="px-3 py-1 text-sm bg-blue-600 text-white rounded hover:bg-blue-700"
+            <button
+              @click="showConflictsModal = false"
+              class="text-white hover:bg-red-700 rounded-full p-2 transition"
+            >
+              <svg
+                class="w-6 h-6"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
               >
-                Use Main
-              </button>
-              <button
-                @click="resolveConflict(conflict.featureId, 'use_branch')"
-                class="px-3 py-1 text-sm bg-green-600 text-white rounded hover:bg-green-700"
-              >
-                Use Branch
-              </button>
-            </div>
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="2"
+                  d="M6 18L18 6M6 6l12 12"
+                />
+              </svg>
+            </button>
           </div>
         </div>
 
-        <div class="mt-6 flex justify-end space-x-3">
-          <button
-            @click="showConflictsModal = false"
-            class="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
+        <!-- Conflicts Content -->
+        <div class="flex-1 overflow-y-auto p-6">
+          <div
+            v-if="conflicts && conflicts.hasConflicts"
+            class="space-y-6"
           >
-            Close
-          </button>
-          <button
-            v-if="resolutions.length > 0"
-            @click="handleResolveConflicts"
-            :disabled="mergeRequestStore.loading"
-            class="px-4 py-2 bg-primary-600 text-white rounded-md hover:bg-primary-700 disabled:opacity-50"
-          >
-            Save Resolutions
-          </button>
+            <div
+              v-for="(conflict, index) in conflicts.conflicts"
+              :key="index"
+              class="border rounded-lg overflow-hidden transition"
+              :class="
+                getResolution(conflict.featureId)
+                  ? 'border-green-300 bg-green-50'
+                  : 'border-red-300 bg-white'
+              "
+            >
+              <!-- Conflict Header -->
+              <div
+                class="px-4 py-3 flex items-center justify-between"
+                :class="
+                  getResolution(conflict.featureId)
+                    ? 'bg-green-100'
+                    : 'bg-red-100'
+                "
+              >
+                <div class="flex items-center space-x-3">
+                  <div
+                    class="w-8 h-8 rounded-full flex items-center justify-center"
+                    :class="
+                      getResolution(conflict.featureId)
+                        ? 'bg-green-600 text-white'
+                        : 'bg-red-600 text-white'
+                    "
+                  >
+                    <svg
+                      v-if="getResolution(conflict.featureId)"
+                      class="w-5 h-5"
+                      fill="currentColor"
+                      viewBox="0 0 20 20"
+                    >
+                      <path
+                        fill-rule="evenodd"
+                        d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
+                        clip-rule="evenodd"
+                      />
+                    </svg>
+                    <span v-else class="font-bold">{{ index + 1 }}</span>
+                  </div>
+                  <div>
+                    <p class="font-semibold text-gray-900">
+                      {{ conflict.featureId }}
+                    </p>
+                    <p class="text-sm text-gray-600">
+                      {{ formatConflictType(conflict.conflictType) }}
+                    </p>
+                  </div>
+                </div>
+                <div
+                  v-if="getResolution(conflict.featureId)"
+                  class="px-3 py-1 bg-green-600 text-white text-sm rounded-full font-medium"
+                >
+                  {{
+                    getResolution(conflict.featureId) === "use_main"
+                      ? "Using Main"
+                      : "Using Branch"
+                  }}
+                </div>
+              </div>
+
+              <!-- Conflict Details -->
+              <div class="p-4">
+                <!-- Property Differences -->
+                <div v-if="hasPropertyDiff(conflict)" class="mb-4">
+                  <h4 class="font-semibold text-gray-700 mb-2 flex items-center">
+                    <svg
+                      class="w-4 h-4 mr-2"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        stroke-width="2"
+                        d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+                      />
+                    </svg>
+                    Property Changes
+                  </h4>
+                  <div class="space-y-1">
+                    <div
+                      v-for="key in getPropertyKeys(conflict)"
+                      :key="key"
+                      class="text-sm"
+                    >
+                      <div
+                        v-if="isPropertyChanged(conflict, key)"
+                        class="bg-yellow-50 border border-yellow-200 rounded p-2"
+                      >
+                        <div class="font-medium text-gray-700">{{ key }}:</div>
+                        <div class="grid grid-cols-2 gap-2 mt-1">
+                          <div class="text-red-700 flex items-start">
+                            <span class="text-red-600 mr-1">-</span>
+                            <span class="break-all">{{
+                              formatValue(conflict.mainVersion?.properties?.[key])
+                            }}</span>
+                          </div>
+                          <div class="text-green-700 flex items-start">
+                            <span class="text-green-600 mr-1">+</span>
+                            <span class="break-all">{{
+                              formatValue(conflict.branchVersion?.properties?.[key])
+                            }}</span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Geometry Differences -->
+                <div v-if="hasGeometryDiff(conflict)" class="mb-4">
+                  <h4 class="font-semibold text-gray-700 mb-2 flex items-center">
+                    <svg
+                      class="w-4 h-4 mr-2"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        stroke-width="2"
+                        d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7"
+                      />
+                    </svg>
+                    Geometry Changed
+                  </h4>
+                  <div class="bg-orange-50 border border-orange-300 rounded-lg p-4">
+                    <div class="flex items-start space-x-2 mb-3">
+                      <svg
+                        class="w-5 h-5 text-orange-600 mt-0.5"
+                        fill="currentColor"
+                        viewBox="0 0 20 20"
+                      >
+                        <path
+                          fill-rule="evenodd"
+                          d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z"
+                          clip-rule="evenodd"
+                        />
+                      </svg>
+                      <p class="text-sm text-orange-800">
+                        The feature coordinates have been modified in both branches.
+                        Review the differences and choose which version to keep.
+                      </p>
+                    </div>
+
+                    <!-- Map Comparison -->
+                    <ConflictMapComparison
+                      :mainGeometry="conflict.mainVersion?.geometry"
+                      :branchGeometry="conflict.branchVersion?.geometry"
+                    />
+
+                    <div v-if="getCoordinateDiffSummary(conflict)" class="mt-3 text-xs text-orange-700 bg-orange-100 rounded px-3 py-2">
+                      <strong>Change Summary:</strong> {{ getCoordinateDiffSummary(conflict) }}
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Resolution Buttons -->
+                <div class="flex space-x-3 mt-4">
+                  <button
+                    @click="resolveConflict(conflict.featureId, 'use_main')"
+                    class="flex-1 py-3 px-4 rounded-lg font-medium transition"
+                    :class="
+                      getResolution(conflict.featureId) === 'use_main'
+                        ? 'bg-blue-600 text-white shadow-lg'
+                        : 'bg-blue-100 text-blue-700 hover:bg-blue-200'
+                    "
+                  >
+                    <div class="flex items-center justify-center">
+                      <svg
+                        v-if="getResolution(conflict.featureId) === 'use_main'"
+                        class="w-5 h-5 mr-2"
+                        fill="currentColor"
+                        viewBox="0 0 20 20"
+                      >
+                        <path
+                          fill-rule="evenodd"
+                          d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z"
+                          clip-rule="evenodd"
+                        />
+                      </svg>
+                      Use Main Branch
+                    </div>
+                  </button>
+                  <button
+                    @click="resolveConflict(conflict.featureId, 'use_branch')"
+                    class="flex-1 py-3 px-4 rounded-lg font-medium transition"
+                    :class="
+                      getResolution(conflict.featureId) === 'use_branch'
+                        ? 'bg-green-600 text-white shadow-lg'
+                        : 'bg-green-100 text-green-700 hover:bg-green-200'
+                    "
+                  >
+                    <div class="flex items-center justify-center">
+                      <svg
+                        v-if="getResolution(conflict.featureId) === 'use_branch'"
+                        class="w-5 h-5 mr-2"
+                        fill="currentColor"
+                        viewBox="0 0 20 20"
+                      >
+                        <path
+                          fill-rule="evenodd"
+                          d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z"
+                          clip-rule="evenodd"
+                        />
+                      </svg>
+                      Use Feature Branch
+                    </div>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div v-else class="text-center py-8 text-gray-500">
+            No conflicts found
+          </div>
+        </div>
+
+        <!-- Modal Footer -->
+        <div class="border-t bg-gray-50 px-6 py-4 flex justify-between items-center">
+          <div class="text-sm text-gray-600">
+            <span v-if="resolutions.length > 0">
+              {{ resolutions.length }} of
+              {{ conflicts?.conflicts.length || 0 }} conflicts resolved
+            </span>
+            <span v-else class="text-red-600 font-medium">
+              Please resolve all conflicts before saving
+            </span>
+          </div>
+          <div class="flex space-x-3">
+            <button
+              @click="showConflictsModal = false"
+              class="px-5 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-100 font-medium transition"
+            >
+              Cancel
+            </button>
+            <button
+              v-if="resolutions.length === conflicts?.conflicts.length"
+              @click="handleResolveConflicts"
+              :disabled="mergeRequestStore.loading"
+              class="px-5 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 disabled:opacity-50 font-medium transition shadow-lg"
+            >
+              {{
+                mergeRequestStore.loading
+                  ? "Saving..."
+                  : `Save ${resolutions.length} Resolution(s)`
+              }}
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -274,6 +502,7 @@ import { MergeRequestStatus } from "@/types";
 import type { BranchComparison as BranchComparisonType } from "@/types";
 import { format } from "date-fns";
 import EnhancedBranchComparison from "@/components/EnhancedBranchComparison.vue";
+import ConflictMapComparison from "@/components/ConflictMapComparison.vue";
 import api from "@/services/api";
 
 const route = useRoute();
@@ -311,6 +540,97 @@ const getStatusClass = (status: MergeRequestStatus) => {
 
 const formatDate = (date: string) => {
   return format(new Date(date), "MMM dd, yyyy HH:mm");
+};
+
+// Helper methods for conflict resolution UI
+const getResolution = (featureId: string) => {
+  const resolution = resolutions.value.find((r) => r.featureId === featureId);
+  return resolution?.resolution;
+};
+
+const formatConflictType = (type: string) => {
+  const types: Record<string, string> = {
+    MODIFY_MODIFY: "Both branches modified this feature",
+    DELETE_MODIFY: "Deleted in one branch, modified in another",
+    MODIFY_DELETE: "Modified in one branch, deleted in another",
+  };
+  return types[type] || type;
+};
+
+const hasPropertyDiff = (conflict: any) => {
+  if (!conflict.mainVersion?.properties || !conflict.branchVersion?.properties)
+    return false;
+  return (
+    JSON.stringify(conflict.mainVersion.properties) !==
+    JSON.stringify(conflict.branchVersion.properties)
+  );
+};
+
+const hasGeometryDiff = (conflict: any) => {
+  if (!conflict.mainVersion?.geometry || !conflict.branchVersion?.geometry)
+    return false;
+  return (
+    JSON.stringify(conflict.mainVersion.geometry) !==
+    JSON.stringify(conflict.branchVersion.geometry)
+  );
+};
+
+const getPropertyKeys = (conflict: any) => {
+  const mainKeys = Object.keys(conflict.mainVersion?.properties || {});
+  const branchKeys = Object.keys(conflict.branchVersion?.properties || {});
+  return Array.from(new Set([...mainKeys, ...branchKeys]));
+};
+
+const isPropertyChanged = (conflict: any, key: string) => {
+  const mainValue = conflict.mainVersion?.properties?.[key];
+  const branchValue = conflict.branchVersion?.properties?.[key];
+  return JSON.stringify(mainValue) !== JSON.stringify(branchValue);
+};
+
+const formatValue = (value: any) => {
+  if (value === null || value === undefined) return "N/A";
+  if (typeof value === "object") return JSON.stringify(value);
+  return String(value);
+};
+
+const countCoordinates = (geometry: any): number => {
+  if (!geometry || !geometry.coordinates) return 0;
+  const coords = geometry.coordinates;
+
+  // Handle different geometry types
+  if (geometry.type === 'Point') {
+    return 1;
+  } else if (geometry.type === 'LineString' || geometry.type === 'MultiPoint') {
+    return Array.isArray(coords) ? coords.length : 0;
+  } else if (geometry.type === 'Polygon') {
+    return Array.isArray(coords[0]) ? coords[0].length : 0;
+  } else if (geometry.type === 'MultiLineString') {
+    return coords.reduce((sum: number, line: any[]) => sum + line.length, 0);
+  } else if (geometry.type === 'MultiPolygon') {
+    return coords.reduce((sum: number, polygon: any[]) =>
+      sum + (polygon[0]?.length || 0), 0
+    );
+  }
+  return 0;
+};
+
+const getCoordinateDiffSummary = (conflict: any) => {
+  const mainGeom = conflict.mainVersion?.geometry;
+  const branchGeom = conflict.branchVersion?.geometry;
+
+  if (!mainGeom || !branchGeom) return null;
+
+  const mainCount = countCoordinates(mainGeom);
+  const branchCount = countCoordinates(branchGeom);
+
+  if (mainCount !== branchCount) {
+    const diff = Math.abs(branchCount - mainCount);
+    return branchCount > mainCount
+      ? `${diff} coordinate point(s) added (${mainCount} → ${branchCount})`
+      : `${diff} coordinate point(s) removed (${mainCount} → ${branchCount})`;
+  }
+
+  return `${mainCount} coordinate points (positions modified)`;
 };
 
 const handleReview = async (status: "approved" | "rejected") => {
@@ -374,12 +694,14 @@ const loadMergeRequest = async () => {
     if (mergeRequest.value?.hasConflicts) {
       await mergeRequestStore.fetchConflicts(mergeRequestId);
     }
-    // Automatically load branch comparison
-    await loadBranchComparison();
   } catch (error) {
     console.error("Failed to load merge request:", error);
   } finally {
     loading.value = false;
+    // Automatically load branch comparison after loading is complete
+    if (mergeRequest.value) {
+      loadBranchComparison();
+    }
   }
 };
 

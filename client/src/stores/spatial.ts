@@ -15,6 +15,7 @@ export const useSpatialStore = defineStore("spatial", () => {
   const currentBranch = ref<Branch | null>(null);
   const branchCanEdit = ref(false);
   const branchHasOpenMergeRequest = ref(false);
+  const branchHasUnresolvedConflicts = ref(false);
   const commits = ref<Commit[]>([]);
   const features = ref<SpatialFeature[]>([]);
   const conflicts = ref<BranchConflicts | null>(null);
@@ -57,6 +58,7 @@ export const useSpatialStore = defineStore("spatial", () => {
       currentBranch.value = result.branch;
       branchCanEdit.value = result.canEdit;
       branchHasOpenMergeRequest.value = result.hasOpenMergeRequest;
+      branchHasUnresolvedConflicts.value = result.hasUnresolvedConflicts;
       return result;
     } catch (err: any) {
       error.value = err.response?.data?.message || "Failed to fetch branch";
@@ -86,6 +88,8 @@ export const useSpatialStore = defineStore("spatial", () => {
     error.value = null;
     try {
       conflicts.value = await api.fetchMainBranch(branchId);
+      // Refresh branch data to get updated hasUnresolvedConflicts flag
+      await fetchBranchWithPermissions(branchId);
       return conflicts.value;
     } catch (err: any) {
       error.value =
@@ -156,6 +160,7 @@ export const useSpatialStore = defineStore("spatial", () => {
     currentBranch.value = null;
     branchCanEdit.value = false;
     branchHasOpenMergeRequest.value = false;
+    branchHasUnresolvedConflicts.value = false;
     commits.value = [];
     features.value = [];
     conflicts.value = null;
@@ -166,6 +171,7 @@ export const useSpatialStore = defineStore("spatial", () => {
     currentBranch,
     branchCanEdit,
     branchHasOpenMergeRequest,
+    branchHasUnresolvedConflicts,
     commits,
     features,
     conflicts,
