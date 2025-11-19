@@ -8,7 +8,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { BranchService } from '../services/branch.service';
-import { CreateBranchDto } from '../dto/branch.dto';
+import { CreateBranchDto, ResolveBranchConflictsDto } from '../dto/branch.dto';
 import { JwtAuthGuard } from '../guards/jwt-auth.guard';
 import { User } from '../entities';
 import { CurrentUser } from 'src/decorators/user.decorator';
@@ -41,6 +41,16 @@ export class BranchController {
   @Post(':id/fetch')
   fetchMainBranch(@Param('id') id: string, @CurrentUser() user: User) {
     return this.branchService.fetchMainBranch(id, user);
+  }
+
+  @Post(':id/resolve-conflicts')
+  resolveBranchConflicts(
+    @Param('id') id: string,
+    @Body() resolveDto: ResolveBranchConflictsDto,
+    @CurrentUser() user: User,
+  ) {
+    resolveDto.branchId = id;
+    return this.branchService.resolveBranchConflicts(resolveDto, user);
   }
 
   @Get(':id/features')

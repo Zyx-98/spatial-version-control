@@ -126,6 +126,17 @@ class ApiService {
     return response.data;
   }
 
+  async resolveBranchConflicts(
+    branchId: string,
+    resolutions: Array<{ featureId: string; resolution: "use_main" | "use_branch" }>
+  ): Promise<{ success: boolean; message: string }> {
+    const response = await this.api.post<{ success: boolean; message: string }>(
+      `/branches/${branchId}/resolve-conflicts`,
+      { resolutions }
+    );
+    return response.data;
+  }
+
   async getLatestFeatures(branchId: string): Promise<SpatialFeature[]> {
     const response = await this.api.get<SpatialFeature[]>(
       `/branches/${branchId}/features`

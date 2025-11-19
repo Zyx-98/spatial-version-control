@@ -4,7 +4,13 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Branch, Commit, SpatialFeature, User } from 'src/entities';
+import {
+  Branch,
+  Commit,
+  FeatureOperation,
+  SpatialFeature,
+  User,
+} from 'src/entities';
 import { Repository } from 'typeorm';
 import { BranchService } from './branch.service';
 import { CreateCommitDto } from 'src/dto/commit.dto';
@@ -30,6 +36,12 @@ export class CommitService {
     if (!this.branchService.canEditBranch(branch, user)) {
       throw new ForbiddenException(
         'You do not have permission to edit this branch',
+      );
+    }
+
+    if (branch.hasUnresolvedConflicts) {
+      throw new ForbiddenException(
+        'Cannot create commit. This branch has unresolved conflicts with main. Please resolve conflicts first.',
       );
     }
 
@@ -60,9 +72,9 @@ export class CommitService {
 
     await this.spatialFeatureRepository.save(spatialFeatures);
 
-    await this.branchRepository.update(branch.id, {
-      headCommitId: savedCommit.id,
-    });
+    // Update branch head - use save() to trigger updatedAt
+    branch.headCommitId = savedCommit.id;
+    await this.branchRepository.save(branch);
 
     return savedCommit;
   }
@@ -124,9 +136,15 @@ export class CommitService {
     const commit = await this.findOne(commitId);
 
     const changes = {
-      created: commit.features.filter((f) => f.operation === 'create'),
-      updated: commit.features.filter((f) => f.operation === 'update'),
-      deleted: commit.features.filter((f) => f.operation === 'delete'),
+      created: commit.features.filter(
+        (f) => f.operation === FeatureOperation.CREATE,
+      ),
+      updated: commit.features.filter(
+        (f) => f.operation === FeatureOperation.UPDATE,
+      ),
+      deleted: commit.features.filter(
+        (f) => f.operation === FeatureOperation.DELETE,
+      ),
       total: commit.features.length,
     };
 

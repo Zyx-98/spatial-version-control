@@ -27,6 +27,9 @@ export class Branch {
   @Column({ name: 'is_disabled', default: false })
   isDisabled: boolean;
 
+  @Column({ name: 'has_unresolved_conflicts', default: false })
+  hasUnresolvedConflicts: boolean;
+
   @ManyToOne(() => Dataset, (dataset) => dataset.branches)
   @JoinColumn({ name: 'dataset_id' })
   dataset: Dataset;

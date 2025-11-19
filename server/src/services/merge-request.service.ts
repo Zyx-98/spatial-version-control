@@ -67,14 +67,40 @@ export class MergeRequestService {
       targetBranch,
     );
 
+    // Check if the source branch's latest commit is a conflict resolution commit
+    let hasUnresolvedConflicts = conflictData.length > 0;
+
+    if (conflictData.length > 0 && sourceBranch.headCommitId) {
+      const latestCommit = await this.commitRepository.findOne({
+        where: { id: sourceBranch.headCommitId },
+      });
+
+      // If the latest commit is a resolution commit, check if target has changed since
+      if (
+        latestCommit?.message.includes('Resolve conflicts with main branch')
+      ) {
+        // Check if target branch has been updated since the resolution
+        const targetLastUpdated = new Date(
+          targetBranch.updatedAt || targetBranch.createdAt,
+        );
+        const resolutionTime = new Date(latestCommit.createdAt);
+
+        // If target hasn't changed since resolution, conflicts are resolved
+        if (targetLastUpdated <= resolutionTime) {
+          hasUnresolvedConflicts = false;
+        }
+        // If target has changed, these are new conflicts that need resolution
+      }
+    }
+
     const mergeRequest = this.mergeRequestRepository.create({
       title,
       description,
       sourceBranchId,
       targetBranchId,
       createdById: user.id,
-      hasConflicts: conflictData.length > 0,
-      conflicts: conflictData,
+      hasConflicts: hasUnresolvedConflicts,
+      conflicts: hasUnresolvedConflicts ? conflictData : [],
     });
 
     return this.mergeRequestRepository.save(mergeRequest);
@@ -113,6 +139,35 @@ export class MergeRequestService {
 
     if (mergeRequest.targetBranch.dataset.departmentId !== user.departmentId) {
       throw new NotFoundException('Access denied to this merge request');
+    }
+
+    // Recheck if conflicts are still valid (in case they were resolved at branch level)
+    if (
+      mergeRequest.hasConflicts &&
+      mergeRequest.status === MergeRequestStatus.OPEN &&
+      mergeRequest.sourceBranch.headCommitId
+    ) {
+      const latestCommit = await this.commitRepository.findOne({
+        where: { id: mergeRequest.sourceBranch.headCommitId },
+      });
+
+      // If the latest commit is a resolution commit, check if target has changed since
+      if (
+        latestCommit?.message.includes('Resolve conflicts with main branch')
+      ) {
+        const targetLastUpdated = new Date(
+          mergeRequest.targetBranch.updatedAt ||
+            mergeRequest.targetBranch.createdAt,
+        );
+        const resolutionTime = new Date(latestCommit.createdAt);
+
+        // If target hasn't changed since resolution, conflicts are resolved
+        if (targetLastUpdated <= resolutionTime) {
+          mergeRequest.hasConflicts = false;
+          mergeRequest.conflicts = [];
+          await this.mergeRequestRepository.save(mergeRequest);
+        }
+      }
     }
 
     return mergeRequest;
@@ -193,14 +248,13 @@ export class MergeRequestService {
 
     await this.spatialFeatureRepository.save(mergedFeatures);
 
-    await this.branchRepository.update(targetBranch.id, {
-      headCommitId: savedMergeCommit.id,
-    });
+    // Update target branch head - use save() to trigger updatedAt
+    targetBranch.headCommitId = savedMergeCommit.id;
+    await this.branchRepository.save(targetBranch);
 
     // Disable the source branch after successful merge
-    await this.branchRepository.update(sourceBranch.id, {
-      isDisabled: true,
-    });
+    sourceBranch.isDisabled = true;
+    await this.branchRepository.save(sourceBranch);
 
     mergeRequest.status = MergeRequestStatus.MERGED;
     mergeRequest.mergedAt = new Date();
@@ -234,6 +288,13 @@ export class MergeRequestService {
 
     mergeRequest.conflicts = resolvedConflicts;
     mergeRequest.hasConflicts = resolvedConflicts.some((c) => !c.resolved);
+
+    // Clear the unresolved conflicts flag on the source branch if all conflicts are resolved
+    if (!mergeRequest.hasConflicts) {
+      await this.branchRepository.update(mergeRequest.sourceBranchId, {
+        hasUnresolvedConflicts: false,
+      });
+    }
 
     return this.mergeRequestRepository.save(mergeRequest);
   }

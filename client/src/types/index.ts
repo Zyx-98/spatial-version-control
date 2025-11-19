@@ -63,6 +63,7 @@ export interface Branch {
   name: string;
   isMain: boolean;
   isDisabled: boolean;
+  hasUnresolvedConflicts: boolean;
   datasetId: string;
   createdById: string;
   headCommitId?: string;
@@ -92,6 +93,7 @@ export interface BranchWithPermissions {
   branch: Branch;
   canEdit: boolean;
   hasOpenMergeRequest: boolean;
+  hasUnresolvedConflicts: boolean;
 }
 
 // Spatial Feature Types
