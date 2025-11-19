@@ -335,98 +335,13 @@
 
               <!-- Conflict Details -->
               <div class="p-4">
-                <!-- Property Differences -->
-                <div v-if="hasPropertyDiff(conflict)" class="mb-4">
-                  <h4 class="font-semibold text-gray-700 mb-2 flex items-center">
-                    <svg
-                      class="w-4 h-4 mr-2"
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24"
-                    >
-                      <path
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                        stroke-width="2"
-                        d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
-                      />
-                    </svg>
-                    Property Changes
-                  </h4>
-                  <div class="space-y-1">
-                    <div
-                      v-for="key in getPropertyKeys(conflict)"
-                      :key="key"
-                      class="text-sm"
-                    >
-                      <div
-                        v-if="isPropertyChanged(conflict, key)"
-                        class="bg-yellow-50 border border-yellow-200 rounded p-2"
-                      >
-                        <div class="font-medium text-gray-700">{{ key }}:</div>
-                        <div class="grid grid-cols-2 gap-2 mt-1">
-                          <div class="text-red-700 flex items-start">
-                            <span class="text-red-600 mr-1">-</span>
-                            <span class="break-all">{{
-                              formatValue(conflict.mainVersion?.properties?.[key])
-                            }}</span>
-                          </div>
-                          <div class="text-green-700 flex items-start">
-                            <span class="text-green-600 mr-1">+</span>
-                            <span class="break-all">{{
-                              formatValue(conflict.branchVersion?.properties?.[key])
-                            }}</span>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                <!-- Geometry Differences -->
-                <div v-if="hasGeometryDiff(conflict)" class="mb-4">
-                  <h4 class="font-semibold text-gray-700 mb-2 flex items-center">
-                    <svg
-                      class="w-4 h-4 mr-2"
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24"
-                    >
-                      <path
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                        stroke-width="2"
-                        d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7"
-                      />
-                    </svg>
-                    Geometry Changed
-                  </h4>
-                  <div class="bg-orange-50 border border-orange-300 rounded-lg p-4">
-                    <div class="flex items-start space-x-2 mb-3">
-                      <svg
-                        class="w-5 h-5 text-orange-600 mt-0.5"
-                        fill="currentColor"
-                        viewBox="0 0 20 20"
-                      >
-                        <path
-                          fill-rule="evenodd"
-                          d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z"
-                          clip-rule="evenodd"
-                        />
-                      </svg>
-                      <p class="text-sm text-orange-800">
-                        The feature coordinates have been modified in both branches.
-                        Review the differences and choose which version to keep.
-                      </p>
-                    </div>
-
-                    <!-- Map Comparison -->
-                    <ConflictMapComparison
-                      :mainGeometry="conflict.mainVersion?.geometry"
-                      :branchGeometry="conflict.branchVersion?.geometry"
-                    />
-                  </div>
-                </div>
+                <!-- Git-like Diff View -->
+                <ConflictDiffView
+                  :mainVersion="conflict.mainVersion"
+                  :branchVersion="conflict.branchVersion"
+                  mainLabel="main"
+                  :branchLabel="branch?.name || 'branch'"
+                />
 
                 <!-- Resolution Buttons (only show if conflicts are unresolved) -->
                 <div v-if="hasUnresolvedConflicts" class="flex space-x-3 mt-4">
@@ -567,7 +482,7 @@ import { useMergeRequestStore } from "@/stores/mergeRequest";
 import { format } from "date-fns";
 import MapViewer from "@/components/MapViewer.vue";
 import EnhancedCommitChanges from "@/components/EnhancedCommitChanges.vue";
-import ConflictMapComparison from "@/components/ConflictMapComparison.vue";
+import ConflictDiffView from "@/components/ConflictDiffView.vue";
 import api from "@/services/api";
 import type { CommitChanges as CommitChangesType } from "@/types";
 
@@ -675,42 +590,6 @@ const formatConflictType = (type: string) => {
     deleted: "Feature was deleted",
   };
   return types[type] || type;
-};
-
-const hasPropertyDiff = (conflict: any) => {
-  if (!conflict.mainVersion?.properties || !conflict.branchVersion?.properties)
-    return false;
-  return (
-    JSON.stringify(conflict.mainVersion.properties) !==
-    JSON.stringify(conflict.branchVersion.properties)
-  );
-};
-
-const hasGeometryDiff = (conflict: any) => {
-  if (!conflict.mainVersion?.geometry || !conflict.branchVersion?.geometry)
-    return false;
-  return (
-    JSON.stringify(conflict.mainVersion.geometry) !==
-    JSON.stringify(conflict.branchVersion.geometry)
-  );
-};
-
-const getPropertyKeys = (conflict: any) => {
-  const mainKeys = Object.keys(conflict.mainVersion?.properties || {});
-  const branchKeys = Object.keys(conflict.branchVersion?.properties || {});
-  return Array.from(new Set([...mainKeys, ...branchKeys]));
-};
-
-const isPropertyChanged = (conflict: any, key: string) => {
-  const mainValue = conflict.mainVersion?.properties?.[key];
-  const branchValue = conflict.branchVersion?.properties?.[key];
-  return JSON.stringify(mainValue) !== JSON.stringify(branchValue);
-};
-
-const formatValue = (value: any) => {
-  if (value === null || value === undefined) return "N/A";
-  if (typeof value === "object") return JSON.stringify(value);
-  return String(value);
 };
 
 const handleResolveBranchConflicts = async () => {
