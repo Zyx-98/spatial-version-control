@@ -156,6 +156,20 @@ export const useSpatialStore = defineStore("spatial", () => {
     }
   };
 
+  const importGeoJson = async (formData: FormData) => {
+    loading.value = true;
+    error.value = null;
+    try {
+      const response = await api.importGeoJson(formData);
+      return response;
+    } catch (err: any) {
+      error.value = err.response?.data?.message || "Failed to import GeoJSON";
+      throw err;
+    } finally {
+      loading.value = false;
+    }
+  };
+
   const clearCurrentBranch = () => {
     currentBranch.value = null;
     branchCanEdit.value = false;
@@ -186,6 +200,7 @@ export const useSpatialStore = defineStore("spatial", () => {
     fetchCommits,
     createCommit,
     fetchBranchHistory,
+    importGeoJson,
     clearCurrentBranch,
   };
 });

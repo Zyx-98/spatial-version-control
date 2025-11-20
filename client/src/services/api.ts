@@ -161,6 +161,22 @@ class ApiService {
     return response.data;
   }
 
+  async importGeoJson(formData: FormData): Promise<any> {
+    const response = await this.api.post("/commits/import/geojson", formData, {
+      headers: {
+        "Content-Type": "multipart/form-data",
+      },
+    });
+    return response.data;
+  }
+
+  async exportGeoJson(branchId: string): Promise<Blob> {
+    const response = await this.api.get(`/branches/${branchId}/export/geojson`, {
+      responseType: "blob",
+    });
+    return response.data;
+  }
+
   async getBranchHistory(branchId: string): Promise<Commit[]> {
     const response = await this.api.get<Commit[]>(
       `/commits/branch/${branchId}/history`
