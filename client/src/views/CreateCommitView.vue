@@ -1,6 +1,5 @@
 <template>
   <div class="max-w-7xl mx-auto">
-    <!-- Loading State -->
     <div v-if="loadingFeatures" class="text-center py-12">
       <div
         class="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600"
@@ -17,9 +16,7 @@
       </div>
 
       <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <!-- Left Panel - Form -->
         <div class="lg:col-span-1 space-y-6">
-          <!-- Commit Message -->
           <div class="bg-white rounded-lg shadow p-6">
             <h2 class="text-lg font-semibold mb-4">Commit Details</h2>
             <div>
@@ -36,7 +33,105 @@
             </div>
           </div>
 
-          <!-- Feature Properties Editor -->
+          <!-- Import GeoJSON -->
+          <div class="bg-white rounded-lg shadow p-6">
+            <h2 class="text-lg font-semibold mb-4">Import GeoJSON</h2>
+            <div class="space-y-3">
+              <p class="text-sm text-gray-600">
+                Load features from a GeoJSON file to the map. You can review and edit them before committing.
+              </p>
+              <div>
+                <input
+                  type="file"
+                  ref="fileInputRef"
+                  accept=".geojson,.json"
+                  @change="handleFileSelect"
+                  class="hidden"
+                />
+                <button
+                  @click="openFileDialog"
+                  class="w-full px-4 py-2 border-2 border-dashed border-gray-300 rounded-md text-gray-700 hover:border-primary-500 hover:text-primary-600 transition-colors"
+                >
+                  <svg
+                    class="h-6 w-6 mx-auto mb-2"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      stroke-width="2"
+                      d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"
+                    />
+                  </svg>
+                  Choose GeoJSON File
+                </button>
+              </div>
+              <div
+                v-if="selectedFileName"
+                class="flex items-center justify-between p-3 bg-gray-50 rounded-md"
+              >
+                <div class="flex items-center space-x-2">
+                  <svg
+                    class="h-5 w-5 text-green-600"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      stroke-width="2"
+                      d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
+                    />
+                  </svg>
+                  <span class="text-sm font-medium text-gray-700">{{
+                    selectedFileName
+                  }}</span>
+                </div>
+                <button
+                  @click="clearSelectedFile"
+                  class="text-red-600 hover:text-red-700"
+                >
+                  <svg
+                    class="h-5 w-5"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      stroke-width="2"
+                      d="M6 18L18 6M6 6l12 12"
+                    />
+                  </svg>
+                </button>
+              </div>
+              <button
+                v-if="selectedFile"
+                @click="loadGeoJsonFeatures"
+                :disabled="importing"
+                class="w-full px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {{ importing ? "Loading..." : "Load Features to Map" }}
+              </button>
+              <div
+                v-if="importError"
+                class="p-3 bg-red-50 border border-red-200 rounded-md text-sm text-red-800"
+              >
+                {{ importError }}
+              </div>
+              <div
+                v-if="importSuccess"
+                class="p-3 bg-green-50 border border-green-200 rounded-md text-sm text-green-800"
+              >
+                {{ importSuccess }}
+              </div>
+            </div>
+          </div>
+
           <div
             v-if="selectedFeature && currentTool !== 'edit'"
             class="bg-white rounded-lg shadow p-6"
@@ -83,7 +178,6 @@
             </div>
           </div>
 
-          <!-- Add New Feature Properties -->
           <div
             v-if="!selectedFeature && currentTool !== 'edit'"
             class="bg-white rounded-lg shadow p-6"
@@ -111,7 +205,6 @@
             </div>
           </div>
 
-          <!-- Changes Summary -->
           <div class="bg-white rounded-lg shadow p-6">
             <h2 class="text-lg font-semibold mb-4">Changes Summary</h2>
             <div class="space-y-2 text-sm">
@@ -142,7 +235,6 @@
             </div>
           </div>
 
-          <!-- Features List -->
           <div class="bg-white rounded-lg shadow p-6">
             <h2 class="text-lg font-semibold mb-4">
               Current Features ({{ allFeatures.length }})
@@ -233,7 +325,6 @@
             </div>
           </div>
 
-          <!-- Actions -->
           <div class="flex space-x-3">
             <button
               @click="handleCancel"
@@ -251,7 +342,6 @@
           </div>
         </div>
 
-        <!-- Right Panel - Map -->
         <div class="lg:col-span-2">
           <div class="bg-white rounded-lg shadow p-6 sticky top-6">
             <div class="flex justify-between items-center mb-4">
@@ -346,6 +436,11 @@ const currentTool = ref<"point" | "line" | "polygon" | "select" | "edit">(
 );
 const mapEditorRef = ref<InstanceType<typeof MapEditor> | null>(null);
 
+const fileInputRef = ref<HTMLInputElement | null>(null);
+const openFileDialog = () => {
+  fileInputRef.value?.click();
+};
+
 // Features state
 const originalFeatures = ref<any[]>([]);
 const currentFeatures = ref<any[]>([]);
@@ -360,6 +455,13 @@ const selectedFeatureProperties = ref("{}");
 const propertiesError = ref("");
 const newFeatureProperties = ref("{}");
 const newPropertiesError = ref("");
+
+// GeoJSON import
+const selectedFile = ref<File | null>(null);
+const selectedFileName = ref("");
+const importing = ref(false);
+const importError = ref("");
+const importSuccess = ref("");
 
 const tools = [
   {
@@ -378,22 +480,18 @@ const tools = [
   },
 ];
 
-// Helper function for deep comparison
 const deepEqual = (obj1: any, obj2: any): boolean => {
   return JSON.stringify(obj1) === JSON.stringify(obj2);
 };
 
-// Computed
 const allFeatures = computed(() => {
   const features = [];
 
-  // Add original features (with their current state)
   for (const originalFeature of originalFeatures.value) {
     const featureId = originalFeature.featureId;
     const isDeleted = deletedFeatureIds.value.has(featureId);
     const isModified = modifiedFeatureIds.value.has(featureId);
 
-    // Find the current version if modified
     let currentFeature = originalFeature;
     if (isModified) {
       const modified = currentFeatures.value.find(
@@ -410,7 +508,6 @@ const allFeatures = computed(() => {
     });
   }
 
-  // Add new features
   for (const feature of newFeatures.value) {
     features.push({
       ...feature,
@@ -434,7 +531,6 @@ const canCommit = computed(() => {
   return commitMessage.value.trim() !== "" && totalChanges.value > 0;
 });
 
-// Watch for properties validation
 watch(selectedFeatureProperties, (newValue) => {
   try {
     JSON.parse(newValue);
@@ -453,12 +549,10 @@ watch(newFeatureProperties, (newValue) => {
   }
 });
 
-// Methods
 const loadCurrentFeatures = async () => {
   try {
     loadingFeatures.value = true;
 
-    // Check permissions first
     const permissionsResult =
       await spatialStore.fetchBranchWithPermissions(branchId);
     if (!permissionsResult.canEdit) {
@@ -578,7 +672,6 @@ const handleGeometryUpdated = (index: number, newGeometry: any) => {
       }
     }
   } else {
-    // Update new feature
     const newIndex = newFeatures.value.findIndex(
       (f) => f.featureId === featureId
     );
@@ -590,7 +683,6 @@ const handleGeometryUpdated = (index: number, newGeometry: any) => {
     }
   }
 
-  // Clear selection
   selectedFeature.value = null;
   selectedFeatureIndex.value = null;
 };
@@ -752,12 +844,119 @@ const getOperationLabel = (operation: string) => {
   }
 };
 
+// GeoJSON Import Functions
+const handleFileSelect = (event: Event) => {
+  const target = event.target as HTMLInputElement;
+  const file = target.files?.[0];
+
+  if (file) {
+    selectedFile.value = file;
+    selectedFileName.value = file.name;
+    importError.value = "";
+    importSuccess.value = "";
+  }
+};
+
+const clearSelectedFile = () => {
+  selectedFile.value = null;
+  selectedFileName.value = "";
+  importError.value = "";
+  importSuccess.value = "";
+};
+
+const loadGeoJsonFeatures = async () => {
+  if (!selectedFile.value) {
+    importError.value = "Please select a file first";
+    return;
+  }
+
+  importing.value = true;
+  importError.value = "";
+  importSuccess.value = "";
+
+  try {
+    const fileContent = await selectedFile.value.text();
+    const geojsonData = JSON.parse(fileContent);
+
+    if (!geojsonData || !geojsonData.type) {
+      throw new Error("Invalid GeoJSON format");
+    }
+
+    const features =
+      geojsonData.type === "FeatureCollection"
+        ? geojsonData.features
+        : [geojsonData];
+
+    if (!features || features.length === 0) {
+      throw new Error("No features found in GeoJSON file");
+    }
+
+    let loadedCount = 0;
+    for (const feature of features) {
+      if (!feature.geometry) {
+        console.warn("Skipping feature without geometry");
+        continue;
+      }
+
+      const featureId =
+        feature.id?.toString() ||
+        feature.properties?.id?.toString() ||
+        feature.properties?.fid?.toString() ||
+        uuidv4();
+
+      // Map geometry type
+      const geometryTypeMap: Record<string, SpatialFeatureType> = {
+        Point: SpatialFeatureType.POINT,
+        LineString: SpatialFeatureType.LINE,
+        Polygon: SpatialFeatureType.POLYGON,
+        MultiPoint: SpatialFeatureType.MULTIPOINT,
+        MultiLineString: SpatialFeatureType.MULTILINE,
+        MultiPolygon: SpatialFeatureType.MULTIPOLYGON,
+      };
+
+      const geometryType = geometryTypeMap[feature.geometry.type];
+      if (!geometryType) {
+        console.warn(
+          `Unsupported geometry type: ${feature.geometry.type}, skipping feature`
+        );
+        continue;
+      }
+
+      newFeatures.value.push({
+        featureId,
+        geometryType,
+        geometry: feature.geometry,
+        properties: feature.properties || {},
+        operation: FeatureOperation.CREATE,
+      });
+
+      loadedCount++;
+    }
+
+    importSuccess.value = `Successfully loaded ${loadedCount} feature(s) to the map. Review and click "Commit Changes" when ready.`;
+
+    clearSelectedFile();
+
+    setTimeout(() => {
+      importSuccess.value = "";
+    }, 5000);
+  } catch (error: any) {
+    console.error("Import error:", error);
+    if (error instanceof SyntaxError) {
+      importError.value = "Invalid JSON format in the file";
+    } else {
+      importError.value = error.message || "Failed to load GeoJSON file";
+    }
+  } finally {
+    importing.value = false;
+  }
+};
+
 const handleCommit = async () => {
   if (!canCommit.value) return;
 
   const features: SpatialFeatureRequest[] = [];
 
-  // Add modified features
   for (const featureId of modifiedFeatureIds.value) {
     const feature = currentFeatures.value.find(
       (f) => f.featureId === featureId
@@ -773,7 +972,6 @@ const handleCommit = async () => {
     }
   }
 
-  // Add deleted features
   for (const featureId of deletedFeatureIds.value) {
     const feature = originalFeatures.value.find(
       (f) => f.featureId === featureId
@@ -789,7 +987,6 @@ const handleCommit = async () => {
     }
   }
 
-  // Add new features
   for (const feature of newFeatures.value) {
     features.push({
       featureId: feature.featureId,

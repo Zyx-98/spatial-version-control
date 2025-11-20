@@ -52,6 +52,26 @@
               Fetch Main
             </button>
             <button
+              @click="handleExportGeoJson"
+              :disabled="exporting"
+              class="px-4 py-2 border border-primary-600 rounded-md text-primary-600 hover:bg-primary-50 disabled:opacity-50 disabled:cursor-not-allowed flex items-center space-x-2"
+            >
+              <svg
+                class="h-5 w-5"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="2"
+                  d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
+                />
+              </svg>
+              <span>{{ exporting ? 'Exporting...' : 'Export GeoJSON' }}</span>
+            </button>
+            <button
               v-if="canEdit"
               @click="
                 router.push(
@@ -494,6 +514,7 @@ const mergeRequestStore = useMergeRequestStore();
 const datasetId = route.params.datasetId as string;
 const branchId = route.params.branchId as string;
 const loading = ref(false);
+const exporting = ref(false);
 const showConflictsModal = ref(false);
 const showCommitChangesModal = ref(false);
 const selectedCommitChanges = ref<CommitChangesType | null>(null);
@@ -516,6 +537,36 @@ const hasUnresolvedConflicts = computed(
 
 const formatDate = (date: string) => {
   return format(new Date(date), "MMM dd, yyyy HH:mm");
+};
+
+const handleExportGeoJson = async () => {
+  exporting.value = true;
+  try {
+    const blob = await api.exportGeoJson(branchId);
+
+    // Create download link
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+
+    // Generate filename
+    const branchName = branch.value?.name || 'branch';
+    const timestamp = new Date().toISOString().split('T')[0];
+    link.download = `${branchName}_${timestamp}.geojson`;
+
+    // Trigger download
+    document.body.appendChild(link);
+    link.click();
+
+    // Cleanup
+    document.body.removeChild(link);
+    window.URL.revokeObjectURL(url);
+  } catch (error) {
+    console.error("Failed to export GeoJSON:", error);
+    alert("Failed to export GeoJSON. Please try again.");
+  } finally {
+    exporting.value = false;
+  }
 };
 
 const handleFetchMain = async () => {

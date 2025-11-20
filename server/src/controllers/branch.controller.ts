@@ -6,8 +6,12 @@ import {
   Param,
   Query,
   UseGuards,
+  Res,
+  Header,
 } from '@nestjs/common';
+import { Response } from 'express';
 import { BranchService } from '../services/branch.service';
+import { GeoJsonService } from '../services/geojson.service';
 import { CreateBranchDto, ResolveBranchConflictsDto } from '../dto/branch.dto';
 import { JwtAuthGuard } from '../guards/jwt-auth.guard';
 import { User } from '../entities';
@@ -16,7 +20,10 @@ import { CurrentUser } from 'src/decorators/user.decorator';
 @Controller('branches')
 @UseGuards(JwtAuthGuard)
 export class BranchController {
-  constructor(private readonly branchService: BranchService) {}
+  constructor(
+    private readonly branchService: BranchService,
+    private readonly geoJsonService: GeoJsonService,
+  ) {}
 
   @Post()
   create(@Body() createBranchDto: CreateBranchDto, @CurrentUser() user: User) {
@@ -56,5 +63,29 @@ export class BranchController {
   @Get(':id/features')
   getLatestFeatures(@Param('id') id: string) {
     return this.branchService.getLatestFeatures(id);
+  }
+
+  @Get(':id/export/geojson')
+  @Header('Content-Type', 'application/geo+json')
+  async exportGeoJson(
+    @Param('id') branchId: string,
+    @CurrentUser() user: User,
+    @Res() res: Response,
+  ) {
+    // Get branch details to validate access
+    const branch = await this.branchService.findOne(branchId, user);
+
+    // Get all latest features from the branch
+    const features = await this.branchService.getLatestFeatures(branchId);
+
+    // Convert to GeoJSON format
+    const geojson = this.geoJsonService.exportToGeoJson(features);
+
+    // Set download headers
+    const filename = `${branch.name.replace(/[^a-z0-9]/gi, '_')}_export.geojson`;
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+
+    // Send GeoJSON with pretty formatting
+    return res.send(JSON.stringify(geojson, null, 2));
   }
 }

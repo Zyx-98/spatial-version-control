@@ -17,6 +17,7 @@ import { DatasetService } from './services/dataset.service';
 import { BranchService } from './services/branch.service';
 import { CommitService } from './services/commit.service';
 import { MergeRequestService } from './services/merge-request.service';
+import { GeoJsonService } from './services/geojson.service';
 import { AuthController } from './controllers/auth.controller';
 import { DatasetController } from './controllers/dataset.controller';
 import { BranchController } from './controllers/branch.controller';
@@ -88,6 +89,7 @@ import { JwtAuthGuard } from './guards/jwt-auth.guard';
     BranchService,
     CommitService,
     MergeRequestService,
+    GeoJsonService,
     JwtStrategy,
     JwtAuthGuard,
   ],
