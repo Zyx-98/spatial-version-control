@@ -18,6 +18,7 @@ import type {
   ReviewMergeRequestRequest,
   ResolveMergeConflictsRequest,
   SpatialFeature,
+  ConflictResolution,
 } from "@/types";
 
 const API_BASE_URL =
@@ -128,7 +129,7 @@ class ApiService {
 
   async resolveBranchConflicts(
     branchId: string,
-    resolutions: Array<{ featureId: string; resolution: "use_main" | "use_branch" }>
+    resolutions: ConflictResolution[]
   ): Promise<{ success: boolean; message: string }> {
     const response = await this.api.post<{ success: boolean; message: string }>(
       `/branches/${branchId}/resolve-conflicts`,

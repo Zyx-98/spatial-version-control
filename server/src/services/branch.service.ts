@@ -31,6 +31,8 @@ export class BranchService {
     private commitRepository: Repository<Commit>,
     @InjectRepository(MergeRequest)
     private mergeRequestRepository: Repository<MergeRequest>,
+    @InjectRepository(SpatialFeature)
+    private spatialFeatureRepository: Repository<SpatialFeature>,
     private dataSource: DataSource,
   ) {}
 
@@ -195,6 +197,11 @@ export class BranchService {
       targetFeatures.map((f) => [f.featureId, f]),
     );
 
+    const commonAncestor = await this.findCommonAncestor(
+      sourceBranch,
+      targetBranch,
+    );
+
     for (const [featureId, sourceFeature] of sourceFeatureMap) {
       const targetFeature = targetFeatureMap.get(featureId);
 
@@ -203,10 +210,19 @@ export class BranchService {
           JSON.stringify(sourceFeature.geometry) !==
           JSON.stringify(targetFeature.geometry)
         ) {
+          let ancestorFeature: SpatialFeature | null = null;
+          if (commonAncestor) {
+            ancestorFeature = await this.getFeatureAtCommit(
+              commonAncestor.id,
+              featureId,
+            );
+          }
+
           conflicts.push({
             featureId,
             mainVersion: targetFeature,
             branchVersion: sourceFeature,
+            ancestorVersion: ancestorFeature,
             conflictType: 'both_modified',
           });
         }
@@ -214,6 +230,70 @@ export class BranchService {
     }
 
     return conflicts;
+  }
+
+  async findCommonAncestor(
+    branch1: Branch,
+    branch2: Branch,
+  ): Promise<Commit | null> {
+    if (!branch1.headCommitId || !branch2.headCommitId) {
+      return null;
+    }
+
+    const branch1Commits = await this.getCommitHistory(branch1.headCommitId);
+    const branch2Commits = await this.getCommitHistory(branch2.headCommitId);
+
+    const branch1CommitIds = new Set(branch1Commits.map((c) => c.id));
+
+    for (const commit of branch2Commits) {
+      if (branch1CommitIds.has(commit.id)) {
+        return commit;
+      }
+    }
+
+    return null;
+  }
+
+  async getFeatureAtCommit(
+    commitId: string,
+    featureId: string,
+  ): Promise<SpatialFeature | null> {
+    const commit = await this.commitRepository.findOne({
+      where: { id: commitId },
+      relations: ['branch'],
+    });
+
+    if (!commit) {
+      return null;
+    }
+
+    const features = new Map<string, SpatialFeature>();
+
+    let currentCommit: Commit | null = commit;
+
+    while (currentCommit) {
+      const commitFeatures = await this.spatialFeatureRepository.find({
+        where: { commitId: currentCommit.id },
+      });
+
+      for (const feature of commitFeatures) {
+        if (!features.has(feature.featureId)) {
+          if (feature.operation !== FeatureOperation.DELETE) {
+            features.set(feature.featureId, feature);
+          }
+        }
+      }
+
+      if (currentCommit.parentCommitId) {
+        currentCommit = await this.commitRepository.findOne({
+          where: { id: currentCommit.parentCommitId },
+        });
+      } else {
+        currentCommit = null;
+      }
+    }
+
+    return features.get(featureId) || null;
   }
 
   async getLatestFeatures(branchId: string): Promise<SpatialFeature[]> {
@@ -359,27 +439,107 @@ export class BranchService {
 
     const resolvedFeatures: any[] = [];
 
+    const commonAncestor = await this.findCommonAncestor(branch, mainBranch);
+
     for (const resolution of resolveDto.resolutions) {
       const branchFeature = branchFeatureMap.get(resolution.featureId);
       const mainFeature = mainFeatureMap.get(resolution.featureId);
 
-      if (resolution.resolution === 'use_main' && mainFeature) {
-        resolvedFeatures.push({
-          featureId: mainFeature.featureId,
-          geometryType: mainFeature.geometryType,
-          geometry: mainFeature.geometry,
-          properties: mainFeature.properties,
-          operation: FeatureOperation.UPDATE,
-        });
-      } else if (resolution.resolution === 'use_branch' && branchFeature) {
-        // Keep branch version - re-commit it to mark as intentionally kept
-        resolvedFeatures.push({
-          featureId: branchFeature.featureId,
-          geometryType: branchFeature.geometryType,
-          geometry: branchFeature.geometry,
-          properties: branchFeature.properties,
-          operation: FeatureOperation.UPDATE,
-        });
+      let resolvedFeature: any = null;
+
+      switch (resolution.resolution) {
+        case 'use_main':
+          if (mainFeature) {
+            resolvedFeature = {
+              featureId: mainFeature.featureId,
+              geometryType: mainFeature.geometryType,
+              geometry: mainFeature.geometry,
+              properties: mainFeature.properties,
+              operation: FeatureOperation.UPDATE,
+            };
+          }
+          break;
+
+        case 'use_branch':
+          if (branchFeature) {
+            resolvedFeature = {
+              featureId: branchFeature.featureId,
+              geometryType: branchFeature.geometryType,
+              geometry: branchFeature.geometry,
+              properties: branchFeature.properties,
+              operation: FeatureOperation.UPDATE,
+            };
+          }
+          break;
+
+        case 'use_ancestor':
+          if (commonAncestor) {
+            const ancestorFeature = await this.getFeatureAtCommit(
+              commonAncestor.id,
+              resolution.featureId,
+            );
+            if (ancestorFeature) {
+              resolvedFeature = {
+                featureId: ancestorFeature.featureId,
+                geometryType: ancestorFeature.geometryType,
+                geometry: ancestorFeature.geometry,
+                properties: ancestorFeature.properties,
+                operation: FeatureOperation.UPDATE,
+              };
+            } else {
+              throw new BadRequestException(
+                `Ancestor version not found for feature ${resolution.featureId}`,
+              );
+            }
+          } else {
+            throw new BadRequestException(
+              'No common ancestor found for use_ancestor resolution',
+            );
+          }
+          break;
+
+        case 'delete': {
+          const featureToDelete = branchFeature || mainFeature;
+          if (featureToDelete) {
+            resolvedFeature = {
+              featureId: featureToDelete.featureId,
+              geometryType: featureToDelete.geometryType,
+              geometry: featureToDelete.geometry,
+              properties: {},
+              operation: FeatureOperation.DELETE,
+            };
+          }
+          break;
+        }
+
+        case 'custom': {
+          if (!resolution.customGeometry) {
+            throw new BadRequestException(
+              `Custom geometry required for custom resolution of feature ${resolution.featureId}`,
+            );
+          }
+          const baseFeature = branchFeature || mainFeature;
+          if (baseFeature) {
+            resolvedFeature = {
+              featureId: resolution.featureId,
+              geometryType: baseFeature.geometryType,
+              geometry: resolution.customGeometry,
+              properties: resolution.customProperties || {},
+              operation: FeatureOperation.UPDATE,
+            };
+          }
+          break;
+        }
+
+        default:
+          throw new BadRequestException(
+            // eslint-disable-next-line @typescript-eslint/restrict-template-expressions
+            `Unknown resolution strategy: ${resolution.resolution}`,
+          );
+      }
+
+      if (resolvedFeature) {
+        resolvedFeatures.push(resolvedFeature);
       }
     }
 

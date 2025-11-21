@@ -326,26 +326,112 @@ export class MergeRequestService {
 
         const resolvedFeatures: any[] = [];
 
+        const commonAncestor = await this.branchService.findCommonAncestor(
+          sourceBranch,
+          targetBranch,
+        );
+
         for (const resolution of resolveDto.resolutions) {
           const branchFeature = branchFeatureMap.get(resolution.featureId);
           const mainFeature = mainFeatureMap.get(resolution.featureId);
 
-          if (resolution.resolution === 'use_main' && mainFeature) {
-            resolvedFeatures.push({
-              featureId: mainFeature.featureId,
-              geometryType: mainFeature.geometryType,
-              geometry: mainFeature.geometry,
-              properties: mainFeature.properties,
-              operation: 'update',
-            });
-          } else if (resolution.resolution === 'use_branch' && branchFeature) {
-            resolvedFeatures.push({
-              featureId: branchFeature.featureId,
-              geometryType: branchFeature.geometryType,
-              geometry: branchFeature.geometry,
-              properties: branchFeature.properties,
-              operation: 'update',
-            });
+          let resolvedFeature: any = null;
+
+          switch (resolution.resolution) {
+            case 'use_main':
+              if (mainFeature) {
+                resolvedFeature = {
+                  featureId: mainFeature.featureId,
+                  geometryType: mainFeature.geometryType,
+                  geometry: mainFeature.geometry,
+                  properties: mainFeature.properties,
+                  operation: 'update',
+                };
+              }
+              break;
+
+            case 'use_branch':
+              if (branchFeature) {
+                resolvedFeature = {
+                  featureId: branchFeature.featureId,
+                  geometryType: branchFeature.geometryType,
+                  geometry: branchFeature.geometry,
+                  properties: branchFeature.properties,
+                  operation: 'update',
+                };
+              }
+              break;
+
+            case 'use_ancestor': {
+              if (commonAncestor) {
+                const ancestorFeature =
+                  await this.branchService.getFeatureAtCommit(
+                    commonAncestor.id,
+                    resolution.featureId,
+                  );
+                if (ancestorFeature) {
+                  resolvedFeature = {
+                    featureId: ancestorFeature.featureId,
+                    geometryType: ancestorFeature.geometryType,
+                    geometry: ancestorFeature.geometry,
+                    properties: ancestorFeature.properties,
+                    operation: 'update',
+                  };
+                } else {
+                  throw new BadRequestException(
+                    `Ancestor version not found for feature ${resolution.featureId}`,
+                  );
+                }
+              } else {
+                throw new BadRequestException(
+                  'No common ancestor found for use_ancestor resolution',
+                );
+              }
+              break;
+            }
+
+            case 'delete': {
+              const featureToDelete = branchFeature || mainFeature;
+              if (featureToDelete) {
+                resolvedFeature = {
+                  featureId: featureToDelete.featureId,
+                  geometryType: featureToDelete.geometryType,
+                  geometry: featureToDelete.geometry,
+                  properties: {},
+                  operation: 'delete',
+                };
+              }
+              break;
+            }
+
+            case 'custom': {
+              if (!resolution.customData?.geometry) {
+                throw new BadRequestException(
+                  `Custom geometry required for custom resolution of feature ${resolution.featureId}`,
+                );
+              }
+              const baseFeature = branchFeature || mainFeature;
+              if (baseFeature) {
+                resolvedFeature = {
+                  featureId: resolution.featureId,
+                  geometryType: baseFeature.geometryType,
+                  geometry: resolution.customData.geometry,
+                  properties: resolution.customData.properties || {},
+                  operation: 'update',
+                };
+              }
+              break;
+            }
+
+            default:
+              throw new BadRequestException(
+                // eslint-disable-next-line @typescript-eslint/restrict-template-expressions
+                `Unknown resolution strategy: ${resolution.resolution}`,
+              );
+          }
+
+          if (resolvedFeature) {
+            resolvedFeatures.push(resolvedFeature);
           }
         }
 
