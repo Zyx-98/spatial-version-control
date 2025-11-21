@@ -86,7 +86,22 @@ export interface ConflictDetail {
   featureId: string;
   mainVersion: any;
   branchVersion: any;
+  ancestorVersion: any | null;
   conflictType: "modified" | "deleted" | "both_modified";
+}
+
+export type ConflictResolutionStrategy =
+  | "use_main"
+  | "use_branch"
+  | "use_ancestor"
+  | "delete"
+  | "custom";
+
+export interface ConflictResolution {
+  featureId: string;
+  resolution: ConflictResolutionStrategy;
+  customGeometry?: any;
+  customProperties?: any;
 }
 
 export interface BranchWithPermissions {

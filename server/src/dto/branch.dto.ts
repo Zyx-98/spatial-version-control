@@ -6,6 +6,7 @@ import {
   ValidateNested,
   IsIn,
   IsOptional,
+  IsObject,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 
@@ -34,6 +35,7 @@ export class ConflictDetail {
   featureId: string;
   mainVersion: any;
   branchVersion: any;
+  ancestorVersion: any | null; // State before divergence
   conflictType: 'modified' | 'deleted' | 'both_modified';
 }
 
@@ -42,9 +44,18 @@ export class ConflictResolutionDto {
   @IsNotEmpty()
   featureId: string;
 
-  @IsIn(['use_main', 'use_branch'])
+  @IsIn(['use_main', 'use_branch', 'use_ancestor', 'delete', 'custom'])
   @IsNotEmpty()
-  resolution: 'use_main' | 'use_branch';
+  resolution: 'use_main' | 'use_branch' | 'use_ancestor' | 'delete' | 'custom';
+
+  // Optional: for custom resolution, provide custom geometry and properties
+  @IsOptional()
+  @IsObject()
+  customGeometry?: any;
+
+  @IsOptional()
+  @IsObject()
+  customProperties?: any;
 }
 
 export class ResolveBranchConflictsDto {
