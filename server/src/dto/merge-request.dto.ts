@@ -4,6 +4,8 @@ import {
   IsOptional,
   IsString,
   IsUUID,
+  IsIn,
+  IsObject,
 } from 'class-validator';
 import { MergeRequestStatus } from '../entities';
 
@@ -45,7 +47,18 @@ export class ResolveMergeConflictsDto {
 }
 
 export class ConflictResolution {
+  @IsString()
+  @IsNotEmpty()
   featureId: string;
-  resolution: 'use_main' | 'use_branch' | 'custom';
-  customData?: any;
+
+  @IsIn(['use_main', 'use_branch', 'use_ancestor', 'delete', 'custom'])
+  @IsNotEmpty()
+  resolution: 'use_main' | 'use_branch' | 'use_ancestor' | 'delete' | 'custom';
+
+  @IsOptional()
+  @IsObject()
+  customData?: {
+    geometry?: any;
+    properties?: any;
+  };
 }

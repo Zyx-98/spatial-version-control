@@ -199,7 +199,6 @@
       </div>
     </div>
 
-    <!-- Commit Changes Modal -->
     <div
       v-if="showCommitChangesModal && selectedCommitChanges"
       class="fixed inset-0 bg-gray-500 bg-opacity-75 flex items-center justify-center z-[1000]"
@@ -222,7 +221,6 @@
       </div>
     </div>
 
-    <!-- Enhanced Conflicts Modal -->
     <div
       v-if="showConflictsModal"
       class="fixed inset-0 bg-gray-900 bg-opacity-50 flex items-center justify-center z-[1000] p-4"
@@ -230,7 +228,6 @@
       <div
         class="bg-white rounded-xl shadow-2xl max-w-6xl w-full max-h-[90vh] overflow-hidden flex flex-col"
       >
-        <!-- Modal Header -->
         <div
           class="text-white px-6 py-4"
           :class="hasUnresolvedConflicts ? 'bg-red-600' : 'bg-green-600'"
@@ -272,7 +269,6 @@
           </div>
         </div>
 
-        <!-- Conflicts Content -->
         <div class="flex-1 overflow-y-auto p-6">
           <div
             v-if="conflicts && conflicts.hasConflicts"
@@ -290,7 +286,6 @@
                     : 'border-red-300 bg-white'
               "
             >
-              <!-- Conflict Header -->
               <div
                 class="px-4 py-3 flex items-center justify-between"
                 :class="
@@ -353,9 +348,7 @@
                 </div>
               </div>
 
-              <!-- Conflict Details -->
               <div class="p-4">
-                <!-- Git-like Diff View -->
                 <ConflictDiffView
                   :mainVersion="conflict.mainVersion"
                   :branchVersion="conflict.branchVersion"
@@ -363,58 +356,109 @@
                   :branchLabel="branch?.name || 'branch'"
                 />
 
-                <!-- Resolution Buttons (only show if conflicts are unresolved) -->
-                <div v-if="hasUnresolvedConflicts" class="flex space-x-3 mt-4">
+                <div v-if="hasUnresolvedConflicts" class="mt-4">
+                  <p class="text-sm font-medium text-gray-700 mb-2">Choose Resolution Strategy:</p>
+                  <div class="grid grid-cols-2 gap-2 mb-2">
+                    <!-- Use Main -->
+                    <button
+                      @click="resolveConflict(conflict.featureId, 'use_main')"
+                      class="py-2.5 px-3 rounded-lg font-medium text-sm transition"
+                      :class="
+                        getConflictResolution(conflict.featureId) === 'use_main'
+                          ? 'bg-blue-600 text-white shadow-lg ring-2 ring-blue-300'
+                          : 'bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200'
+                      "
+                    >
+                      <div class="flex items-center justify-center">
+                        <svg v-if="getConflictResolution(conflict.featureId) === 'use_main'" class="w-4 h-4 mr-1.5" fill="currentColor" viewBox="0 0 20 20">
+                          <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" />
+                        </svg>
+                        Main Version
+                      </div>
+                    </button>
+
+                    <!-- Use Branch -->
+                    <button
+                      @click="resolveConflict(conflict.featureId, 'use_branch')"
+                      class="py-2.5 px-3 rounded-lg font-medium text-sm transition"
+                      :class="
+                        getConflictResolution(conflict.featureId) === 'use_branch'
+                          ? 'bg-green-600 text-white shadow-lg ring-2 ring-green-300'
+                          : 'bg-green-50 text-green-700 hover:bg-green-100 border border-green-200'
+                      "
+                    >
+                      <div class="flex items-center justify-center">
+                        <svg v-if="getConflictResolution(conflict.featureId) === 'use_branch'" class="w-4 h-4 mr-1.5" fill="currentColor" viewBox="0 0 20 20">
+                          <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" />
+                        </svg>
+                        My Version
+                      </div>
+                    </button>
+
+                    <button
+                      @click="resolveConflict(conflict.featureId, 'use_ancestor')"
+                      :disabled="!conflict.ancestorVersion"
+                      class="py-2.5 px-3 rounded-lg font-medium text-sm transition"
+                      :class="
+                        getConflictResolution(conflict.featureId) === 'use_ancestor'
+                          ? 'bg-purple-600 text-white shadow-lg ring-2 ring-purple-300'
+                          : conflict.ancestorVersion
+                            ? 'bg-purple-50 text-purple-700 hover:bg-purple-100 border border-purple-200'
+                            : 'bg-gray-100 text-gray-400 cursor-not-allowed border border-gray-200'
+                      "
+                      :title="conflict.ancestorVersion ? 'Revert to original (before changes)' : 'No ancestor version available'"
+                    >
+                      <div class="flex items-center justify-center">
+                        <svg v-if="getConflictResolution(conflict.featureId) === 'use_ancestor'" class="w-4 h-4 mr-1.5" fill="currentColor" viewBox="0 0 20 20">
+                          <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" />
+                        </svg>
+                        Original
+                      </div>
+                    </button>
+
+                    <!-- Delete -->
+                    <button
+                      @click="resolveConflict(conflict.featureId, 'delete')"
+                      class="py-2.5 px-3 rounded-lg font-medium text-sm transition"
+                      :class="
+                        getConflictResolution(conflict.featureId) === 'delete'
+                          ? 'bg-red-600 text-white shadow-lg ring-2 ring-red-300'
+                          : 'bg-red-50 text-red-700 hover:bg-red-100 border border-red-200'
+                      "
+                      title="Remove this feature"
+                    >
+                      <div class="flex items-center justify-center">
+                        <svg v-if="getConflictResolution(conflict.featureId) === 'delete'" class="w-4 h-4 mr-1.5" fill="currentColor" viewBox="0 0 20 20">
+                          <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" />
+                        </svg>
+                        Delete Feature
+                      </div>
+                    </button>
+                  </div>
+
                   <button
-                    @click="resolveConflict(conflict.featureId, 'use_main')"
-                    class="flex-1 py-3 px-4 rounded-lg font-medium transition"
+                    @click="resolveConflict(conflict.featureId, 'custom')"
+                    class="w-full py-2.5 px-3 rounded-lg font-medium text-sm transition"
                     :class="
-                      getConflictResolution(conflict.featureId) === 'use_main'
-                        ? 'bg-blue-600 text-white shadow-lg'
-                        : 'bg-blue-100 text-blue-700 hover:bg-blue-200'
+                      getConflictResolution(conflict.featureId) === 'custom'
+                        ? 'bg-orange-600 text-white shadow-lg ring-2 ring-orange-300'
+                        : 'bg-orange-50 text-orange-700 hover:bg-orange-100 border border-orange-200'
                     "
+                    title="Manually edit geometry and properties"
                   >
                     <div class="flex items-center justify-center">
-                      <svg
-                        v-if="getConflictResolution(conflict.featureId) === 'use_main'"
-                        class="w-5 h-5 mr-2"
-                        fill="currentColor"
-                        viewBox="0 0 20 20"
-                      >
-                        <path
-                          fill-rule="evenodd"
-                          d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z"
-                          clip-rule="evenodd"
-                        />
+                      <svg v-if="getConflictResolution(conflict.featureId) === 'custom'" class="w-4 h-4 mr-1.5" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" />
                       </svg>
-                      Use Main Branch
+                      <svg v-else class="w-4 h-4 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                      </svg>
+                      Custom Edit (Advanced)
                     </div>
                   </button>
-                  <button
-                    @click="resolveConflict(conflict.featureId, 'use_branch')"
-                    class="flex-1 py-3 px-4 rounded-lg font-medium transition"
-                    :class="
-                      getConflictResolution(conflict.featureId) === 'use_branch'
-                        ? 'bg-green-600 text-white shadow-lg'
-                        : 'bg-green-100 text-green-700 hover:bg-green-200'
-                    "
-                  >
-                    <div class="flex items-center justify-center">
-                      <svg
-                        v-if="getConflictResolution(conflict.featureId) === 'use_branch'"
-                        class="w-5 h-5 mr-2"
-                        fill="currentColor"
-                        viewBox="0 0 20 20"
-                      >
-                        <path
-                          fill-rule="evenodd"
-                          d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z"
-                          clip-rule="evenodd"
-                        />
-                      </svg>
-                      Use Feature Branch
-                    </div>
-                  </button>
+                  <p class="text-xs text-gray-500 mt-1 text-center" v-if="getConflictResolution(conflict.featureId) === 'custom'">
+                    Note: Custom resolution requires manual geometry editing (coming soon)
+                  </p>
                 </div>
 
                 <!-- Already Resolved Badge -->
@@ -450,7 +494,6 @@
           </div>
         </div>
 
-        <!-- Modal Footer -->
         <div class="border-t bg-gray-50 px-6 py-4 flex justify-between items-center">
           <div class="text-sm text-gray-600">
             <template v-if="hasUnresolvedConflicts">
@@ -519,7 +562,12 @@ const showConflictsModal = ref(false);
 const showCommitChangesModal = ref(false);
 const selectedCommitChanges = ref<CommitChangesType | null>(null);
 const conflictResolutions = ref<
-  Array<{ featureId: string; resolution: "use_main" | "use_branch" }>
+  Array<{
+    featureId: string;
+    resolution: "use_main" | "use_branch" | "use_ancestor" | "delete" | "custom";
+    customGeometry?: any;
+    customProperties?: any;
+  }>
 >([]);
 const resolvingConflicts = ref(false);
 
@@ -544,21 +592,17 @@ const handleExportGeoJson = async () => {
   try {
     const blob = await api.exportGeoJson(branchId);
 
-    // Create download link
     const url = window.URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
 
-    // Generate filename
     const branchName = branch.value?.name || 'branch';
     const timestamp = new Date().toISOString().split('T')[0];
     link.download = `${branchName}_${timestamp}.geojson`;
 
-    // Trigger download
     document.body.appendChild(link);
     link.click();
 
-    // Cleanup
     document.body.removeChild(link);
     window.URL.revokeObjectURL(url);
   } catch (error) {
@@ -590,7 +634,6 @@ const viewCommitChanges = async (commitId: string) => {
 
 const handleCreateMergeRequest = async () => {
   try {
-    // Get main branch
     const mainBranch = spatialStore.branches.find(
       (b) => b.isMain && b.datasetId === datasetId
     );
@@ -612,7 +655,6 @@ const handleCreateMergeRequest = async () => {
   }
 };
 
-// Conflict resolution helper functions
 const getConflictResolution = (featureId: string) => {
   const resolution = conflictResolutions.value.find(
     (r) => r.featureId === featureId
@@ -622,15 +664,23 @@ const getConflictResolution = (featureId: string) => {
 
 const resolveConflict = (
   featureId: string,
-  resolution: "use_main" | "use_branch"
+  resolution: "use_main" | "use_branch" | "use_ancestor" | "delete" | "custom",
+  customData?: { geometry?: any; properties?: any }
 ) => {
   const existingIndex = conflictResolutions.value.findIndex(
     (r) => r.featureId === featureId
   );
   if (existingIndex >= 0) {
     conflictResolutions.value[existingIndex].resolution = resolution;
+    conflictResolutions.value[existingIndex].customGeometry = customData?.geometry;
+    conflictResolutions.value[existingIndex].customProperties = customData?.properties;
   } else {
-    conflictResolutions.value.push({ featureId, resolution });
+    conflictResolutions.value.push({
+      featureId,
+      resolution,
+      customGeometry: customData?.geometry,
+      customProperties: customData?.properties,
+    });
   }
 };
 
@@ -661,7 +711,6 @@ const handleResolveBranchConflicts = async () => {
     showConflictsModal.value = false;
     conflictResolutions.value = [];
 
-    // Refresh branch data
     await spatialStore.fetchBranchWithPermissions(branchId);
     await spatialStore.fetchLatestFeatures(branchId);
   } catch (error: any) {
