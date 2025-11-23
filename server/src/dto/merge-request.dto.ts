@@ -44,6 +44,14 @@ export class ResolveMergeConflictsDto {
 
   @IsNotEmpty()
   resolutions: ConflictResolution[];
+
+  @IsOptional()
+  @IsUUID()
+  expectedSourceHeadCommitId?: string;
+
+  @IsOptional()
+  @IsUUID()
+  expectedTargetHeadCommitId?: string;
 }
 
 export class ConflictResolution {

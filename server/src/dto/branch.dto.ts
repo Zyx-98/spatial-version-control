@@ -67,4 +67,8 @@ export class ResolveBranchConflictsDto {
   @ValidateNested({ each: true })
   @Type(() => ConflictResolutionDto)
   resolutions: ConflictResolutionDto[];
+
+  @IsOptional()
+  @IsUUID()
+  expectedHeadCommitId?: string;
 }

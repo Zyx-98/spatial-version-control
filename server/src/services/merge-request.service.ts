@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -215,6 +216,21 @@ export class MergeRequestService {
         user,
       );
 
+      const lockedTargetBranch = await queryRunner.manager.findOne(Branch, {
+        where: { id: targetBranch.id },
+        lock: { mode: 'pessimistic_write' },
+      });
+
+      if (!lockedTargetBranch) {
+        throw new NotFoundException('Target branch not found');
+      }
+
+      if (lockedTargetBranch.headCommitId !== targetBranch.headCommitId) {
+        throw new ConflictException(
+          'Target branch has been updated by another user. Please refresh and try again.',
+        );
+      }
+
       const sourceFeatures = await this.branchService.getLatestFeatures(
         sourceBranch.id,
       );
@@ -309,6 +325,26 @@ export class MergeRequestService {
           mergeRequest.targetBranchId,
           user,
         );
+
+        const lockedSourceBranch = await queryRunner.manager.findOne(Branch, {
+          where: { id: sourceBranch.id },
+          lock: { mode: 'pessimistic_write' },
+        });
+
+        if (!lockedSourceBranch) {
+          throw new NotFoundException('Source branch not found');
+        }
+
+        const expectedSourceHeadCommitId =
+          resolveDto.expectedSourceHeadCommitId !== undefined
+            ? resolveDto.expectedSourceHeadCommitId
+            : sourceBranch.headCommitId;
+
+        if (lockedSourceBranch.headCommitId !== expectedSourceHeadCommitId) {
+          throw new ConflictException(
+            'Source branch has been updated by another user. Please refresh and try again.',
+          );
+        }
 
         const branchFeatures = await this.branchService.getLatestFeatures(
           sourceBranch.id,

@@ -1,4 +1,5 @@
 import {
+  ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -100,6 +101,26 @@ export class CommitService {
     await queryRunner.startTransaction();
 
     try {
+      const lockedBranch = await queryRunner.manager.findOne(Branch, {
+        where: { id: branchId },
+        lock: { mode: 'pessimistic_write' },
+      });
+
+      if (!lockedBranch) {
+        throw new NotFoundException('Branch not found');
+      }
+
+      const expectedHeadCommitId =
+        createCommitDto.expectedHeadCommitId !== undefined
+          ? createCommitDto.expectedHeadCommitId
+          : branch.headCommitId;
+
+      if (lockedBranch.headCommitId !== expectedHeadCommitId) {
+        throw new ConflictException(
+          'Branch has been updated by another user. Please refresh and try again.',
+        );
+      }
+
       const commit = queryRunner.manager.create(Commit, {
         message,
         branchId,
