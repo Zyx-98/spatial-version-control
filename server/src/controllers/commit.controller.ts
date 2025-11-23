@@ -13,6 +13,7 @@ import {
 import { FileInterceptor } from '@nestjs/platform-express';
 import { CommitService } from '../services/commit.service';
 import { GeoJsonService } from '../services/geojson.service';
+import { ShapefileService } from '../services/shapefile.service';
 import { CreateCommitDto } from '../dto/commit.dto';
 import { JwtAuthGuard } from '../guards/jwt-auth.guard';
 import { User } from '../entities';
@@ -24,6 +25,7 @@ export class CommitController {
   constructor(
     private readonly commitService: CommitService,
     private readonly geoJsonService: GeoJsonService,
+    private readonly shapefileService: ShapefileService,
   ) {}
 
   @Post()
@@ -48,17 +50,13 @@ export class CommitController {
     }
 
     try {
-      // Parse file content as JSON
       const fileContent = file.buffer.toString('utf-8');
       const geojsonContent = JSON.parse(fileContent);
 
-      // Validate GeoJSON structure
       this.geoJsonService.validateGeoJson(geojsonContent);
 
-      // Parse GeoJSON to internal format
       const features = this.geoJsonService.parseGeoJson(geojsonContent);
 
-      // Create commit with imported features
       const commit = await this.commitService.create(
         {
           branchId,
@@ -80,6 +78,23 @@ export class CommitController {
       }
       throw error;
     }
+  }
+
+  @Post('parse/shapefile')
+  @UseInterceptors(FileInterceptor('file'))
+  async parseShapefile(@UploadedFile() file: Express.Multer.File) {
+    if (!file) {
+      throw new BadRequestException('No file uploaded');
+    }
+
+    const features = await this.shapefileService.parseShapefile(file.buffer);
+
+    return {
+      success: true,
+      message: `Successfully parsed ${features.length} feature(s) from ${file.originalname}`,
+      features,
+      featuresCount: features.length,
+    };
   }
 
   @Get()

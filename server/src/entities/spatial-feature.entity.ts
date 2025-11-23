@@ -11,10 +11,10 @@ import { Commit } from './commit.entity';
 
 export enum SpatialFeatureType {
   POINT = 'Point',
-  LINE = 'Line',
+  LINE = 'LineString',
   POLYGON = 'Polygon',
   MULTI_POINT = 'MultiPoint',
-  MULTI_LINE = 'MultiLine',
+  MULTI_LINE = 'MultiLineString',
   MULTI_POLYGON = 'MultiPolygon',
 }
 

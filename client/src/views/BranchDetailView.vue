@@ -72,6 +72,26 @@
               <span>{{ exporting ? 'Exporting...' : 'Export GeoJSON' }}</span>
             </button>
             <button
+              @click="handleExportShapefile"
+              :disabled="exporting"
+              class="px-4 py-2 border border-purple-600 rounded-md text-purple-600 hover:bg-purple-50 disabled:opacity-50 disabled:cursor-not-allowed flex items-center space-x-2"
+            >
+              <svg
+                class="h-5 w-5"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="2"
+                  d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
+                />
+              </svg>
+              <span>{{ exporting ? 'Exporting...' : 'Export Shapefile' }}</span>
+            </button>
+            <button
               v-if="canEdit"
               @click="
                 router.push(
@@ -608,6 +628,32 @@ const handleExportGeoJson = async () => {
   } catch (error) {
     console.error("Failed to export GeoJSON:", error);
     alert("Failed to export GeoJSON. Please try again.");
+  } finally {
+    exporting.value = false;
+  }
+};
+
+const handleExportShapefile = async () => {
+  exporting.value = true;
+  try {
+    const blob = await api.exportShapefile(branchId);
+
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+
+    const branchName = branch.value?.name || 'branch';
+    const timestamp = new Date().toISOString().split('T')[0];
+    link.download = `${branchName}_${timestamp}.zip`;
+
+    document.body.appendChild(link);
+    link.click();
+
+    document.body.removeChild(link);
+    window.URL.revokeObjectURL(url);
+  } catch (error) {
+    console.error("Failed to export Shapefile:", error);
+    alert("Failed to export Shapefile. Please try again.");
   } finally {
     exporting.value = false;
   }

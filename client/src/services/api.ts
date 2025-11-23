@@ -171,8 +171,24 @@ class ApiService {
     return response.data;
   }
 
+  async parseShapefile(formData: FormData): Promise<any> {
+    const response = await this.api.post("/commits/parse/shapefile", formData, {
+      headers: {
+        "Content-Type": "multipart/form-data",
+      },
+    });
+    return response.data;
+  }
+
   async exportGeoJson(branchId: string): Promise<Blob> {
     const response = await this.api.get(`/branches/${branchId}/export/geojson`, {
+      responseType: "blob",
+    });
+    return response.data;
+  }
+
+  async exportShapefile(branchId: string): Promise<Blob> {
+    const response = await this.api.get(`/branches/${branchId}/export/shapefile`, {
       responseType: "blob",
     });
     return response.data;
