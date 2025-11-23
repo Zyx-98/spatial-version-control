@@ -16,6 +16,7 @@ export const dataSourceOptions: DataSourceOptions = {
   logging: process.env.NODE_ENV === 'development',
   migrationsTableName: 'typeorm_migrations',
   metadataTableName: 'typeorm_metadata',
+  migrationsTransactionMode: 'each', // Allow individual migrations to control transactions
 };
 
 const dataSource = new DataSource(dataSourceOptions);

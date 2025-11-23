@@ -132,6 +132,106 @@
             </div>
           </div>
 
+          <!-- Import Shapefile -->
+          <div class="bg-white rounded-lg shadow p-6">
+            <h2 class="text-lg font-semibold mb-4">Import Shapefile</h2>
+            <div class="space-y-3">
+              <p class="text-sm text-gray-600">
+                Upload a ZIP file containing shapefile components (.shp, .shx, .dbf, .prj).
+                Features will be loaded to the map for review before committing.
+              </p>
+              <div>
+                <input
+                  type="file"
+                  ref="shapefileInputRef"
+                  accept=".zip"
+                  @change="handleShapefileSelect"
+                  class="hidden"
+                />
+                <button
+                  @click="openShapefileDialog"
+                  class="w-full px-4 py-2 border-2 border-dashed border-gray-300 rounded-md text-gray-700 hover:border-primary-500 hover:text-primary-600 transition-colors"
+                >
+                  <svg
+                    class="h-6 w-6 mx-auto mb-2"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      stroke-width="2"
+                      d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"
+                    />
+                  </svg>
+                  Choose Shapefile ZIP
+                </button>
+              </div>
+              <div
+                v-if="selectedShapefileName"
+                class="flex items-center justify-between p-3 bg-gray-50 rounded-md"
+              >
+                <div class="flex items-center space-x-2">
+                  <svg
+                    class="h-5 w-5 text-green-600"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      stroke-width="2"
+                      d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
+                    />
+                  </svg>
+                  <span class="text-sm font-medium text-gray-700">{{
+                    selectedShapefileName
+                  }}</span>
+                </div>
+                <button
+                  @click="clearSelectedShapefile"
+                  class="text-red-600 hover:text-red-700"
+                >
+                  <svg
+                    class="h-5 w-5"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      stroke-width="2"
+                      d="M6 18L18 6M6 6l12 12"
+                    />
+                  </svg>
+                </button>
+              </div>
+              <button
+                v-if="selectedShapefile"
+                @click="loadShapefileFeatures"
+                :disabled="importingShapefile"
+                class="w-full px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {{ importingShapefile ? "Loading..." : "Load Features to Map" }}
+              </button>
+              <div
+                v-if="shapefileError"
+                class="p-3 bg-red-50 border border-red-200 rounded-md text-sm text-red-800"
+              >
+                {{ shapefileError }}
+              </div>
+              <div
+                v-if="shapefileSuccess"
+                class="p-3 bg-green-50 border border-green-200 rounded-md text-sm text-green-800"
+              >
+                {{ shapefileSuccess }}
+              </div>
+            </div>
+          </div>
+
           <div
             v-if="selectedFeature && currentTool !== 'edit'"
             class="bg-white rounded-lg shadow p-6"
@@ -463,6 +563,14 @@ const importing = ref(false);
 const importError = ref("");
 const importSuccess = ref("");
 
+// Shapefile import
+const shapefileInputRef = ref<HTMLInputElement | null>(null);
+const selectedShapefile = ref<File | null>(null);
+const selectedShapefileName = ref("");
+const importingShapefile = ref(false);
+const shapefileError = ref("");
+const shapefileSuccess = ref("");
+
 const tools = [
   {
     type: "select",
@@ -588,12 +696,6 @@ const setTool = (tool: string) => {
 
 const handleToolChange = (tool: string) => {
   currentTool.value = tool as any;
-};
-
-const convertGeometryTypeForAPI = (geoJSONType: string): SpatialFeatureType => {
-  if (geoJSONType === "LineString") return SpatialFeatureType.LINE;
-  if (geoJSONType === "MultiLineString") return SpatialFeatureType.MULTILINE;
-  return geoJSONType as SpatialFeatureType;
 };
 
 const handleFeatureCreated = (geometry: any) => {
@@ -909,9 +1011,9 @@ const loadGeoJsonFeatures = async () => {
         Point: SpatialFeatureType.POINT,
         LineString: SpatialFeatureType.LINE,
         Polygon: SpatialFeatureType.POLYGON,
-        MultiPoint: SpatialFeatureType.MULTIPOINT,
-        MultiLineString: SpatialFeatureType.MULTILINE,
-        MultiPolygon: SpatialFeatureType.MULTIPOLYGON,
+        MultiPoint: SpatialFeatureType.MULTI_POINT,
+        MultiLineString: SpatialFeatureType.MULTI_LINE,
+        MultiPolygon: SpatialFeatureType.MULTI_POLYGON,
       };
 
       const geometryType = geometryTypeMap[feature.geometry.type];
@@ -964,7 +1066,7 @@ const handleCommit = async () => {
     if (feature) {
       features.push({
         featureId: feature.featureId,
-        geometryType: convertGeometryTypeForAPI(feature.geometryType),
+        geometryType: feature.geometryType,
         geometry: feature.geometry,
         properties: feature.properties,
         operation: FeatureOperation.UPDATE,
@@ -979,7 +1081,7 @@ const handleCommit = async () => {
     if (feature) {
       features.push({
         featureId: feature.featureId,
-        geometryType: convertGeometryTypeForAPI(feature.geometryType),
+        geometryType: feature.geometryType,
         geometry: feature.geometry,
         properties: feature.properties,
         operation: FeatureOperation.DELETE,
@@ -990,7 +1092,7 @@ const handleCommit = async () => {
   for (const feature of newFeatures.value) {
     features.push({
       featureId: feature.featureId,
-      geometryType: convertGeometryTypeForAPI(feature.geometryType),
+      geometryType: feature.geometryType,
       geometry: feature.geometry,
       properties: feature.properties,
       operation: FeatureOperation.CREATE,
@@ -1025,6 +1127,87 @@ const handleCancel = () => {
     }
   }
   router.back();
+};
+
+// Shapefile Import Functions
+const openShapefileDialog = () => {
+  shapefileInputRef.value?.click();
+};
+
+const handleShapefileSelect = (event: Event) => {
+  const target = event.target as HTMLInputElement;
+  const file = target.files?.[0];
+
+  if (file) {
+    selectedShapefile.value = file;
+    selectedShapefileName.value = file.name;
+    shapefileError.value = "";
+    shapefileSuccess.value = "";
+  }
+};
+
+const clearSelectedShapefile = () => {
+  selectedShapefile.value = null;
+  selectedShapefileName.value = "";
+  shapefileError.value = "";
+  shapefileSuccess.value = "";
+};
+
+const loadShapefileFeatures = async () => {
+  if (!selectedShapefile.value) {
+    shapefileError.value = "Please select a shapefile ZIP first";
+    return;
+  }
+
+  importingShapefile.value = true;
+  shapefileError.value = "";
+  shapefileSuccess.value = "";
+
+  try {
+    const formData = new FormData();
+    formData.append("file", selectedShapefile.value);
+
+    const response = await spatialStore.parseShapefile(formData);
+
+    if (!response.features || response.features.length === 0) {
+      throw new Error("No features found in shapefile");
+    }
+
+    // Add features to the map (same as GeoJSON import)
+    let loadedCount = 0;
+    for (const feature of response.features) {
+      if (!feature.geometry) {
+        console.warn("Skipping feature without geometry");
+        continue;
+      }
+
+      newFeatures.value.push({
+        featureId: feature.featureId,
+        geometryType: feature.geometryType,
+        geometry: feature.geometry,
+        properties: feature.properties || {},
+        operation: FeatureOperation.CREATE,
+      });
+
+      loadedCount++;
+    }
+
+    shapefileSuccess.value = `Successfully loaded ${loadedCount} feature(s) to the map. Review and click "Commit Changes" when ready.`;
+
+    clearSelectedShapefile();
+
+    setTimeout(() => {
+      shapefileSuccess.value = "";
+    }, 5000);
+  } catch (error: any) {
+    console.error("Shapefile parsing error:", error);
+    shapefileError.value =
+      error.response?.data?.message ||
+      error.message ||
+      "Failed to parse shapefile";
+  } finally {
+    importingShapefile.value = false;
+  }
 };
 
 onMounted(() => {

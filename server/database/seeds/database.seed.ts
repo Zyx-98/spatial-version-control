@@ -99,7 +99,7 @@ async function seed() {
         featureId: 'line-001',
         geometryType: SpatialFeatureType.LINE,
         geometry: {
-          type: 'LineString',
+          type: 'Line',
           coordinates: [
             [-122.4194, 37.7749],
             [-122.4184, 37.7739],
@@ -161,7 +161,7 @@ async function seed() {
         featureId: 'multiline-001',
         geometryType: SpatialFeatureType.MULTI_LINE,
         geometry: {
-          type: 'MultiLineString',
+          type: 'MultiLine',
           coordinates: [
             [
               [-122.43, 37.77],
@@ -385,7 +385,7 @@ async function seed() {
         featureId: 'highway-001',
         geometryType: SpatialFeatureType.MULTI_LINE,
         geometry: {
-          type: 'MultiLineString',
+          type: 'MultiLine',
           coordinates: [
             [
               [-122.45, 37.76],
@@ -436,7 +436,7 @@ async function seed() {
         featureId: 'highway-001',
         geometryType: SpatialFeatureType.MULTI_LINE,
         geometry: {
-          type: 'MultiLineString',
+          type: 'MultiLine',
           coordinates: [
             [
               [-122.45, 37.76],
@@ -459,7 +459,7 @@ async function seed() {
         featureId: 'exit-ramp-001',
         geometryType: SpatialFeatureType.LINE,
         geometry: {
-          type: 'LineString',
+          type: 'Line',
           coordinates: [
             [-122.43, 37.78],
             [-122.435, 37.782],
@@ -496,7 +496,7 @@ async function seed() {
         featureId: 'highway-001',
         geometryType: SpatialFeatureType.MULTI_LINE,
         geometry: {
-          type: 'MultiLineString',
+          type: 'MultiLine',
           coordinates: [
             [
               [-122.45, 37.76],
@@ -519,7 +519,7 @@ async function seed() {
         featureId: 'service-road-001',
         geometryType: SpatialFeatureType.LINE,
         geometry: {
-          type: 'LineString',
+          type: 'Line',
           coordinates: [
             [-122.43, 37.78],
             [-122.425, 37.781],
@@ -544,7 +544,7 @@ async function seed() {
           featureId: 'highway-001',
           geometryType: 'MultiLine',
           geometry: {
-            type: 'MultiLineString',
+            type: 'MultiLine',
             coordinates: [
               [
                 [-122.45, 37.76],
@@ -565,7 +565,7 @@ async function seed() {
           featureId: 'highway-001',
           geometryType: 'MultiLine',
           geometry: {
-            type: 'MultiLineString',
+            type: 'MultiLine',
             coordinates: [
               [
                 [-122.45, 37.76],
@@ -647,7 +647,7 @@ async function seed() {
         featureId: 'pipeline-001',
         geometryType: SpatialFeatureType.LINE,
         geometry: {
-          type: 'LineString',
+          type: 'Line',
           coordinates: [
             [-122.48, 37.753],
             [-122.46, 37.76],
@@ -900,7 +900,7 @@ async function seed() {
         featureId: 'transmission-001',
         geometryType: SpatialFeatureType.LINE,
         geometry: {
-          type: 'LineString',
+          type: 'Line',
           coordinates: [
             [-122.45, 37.77],
             [-122.44, 37.775],
@@ -1112,7 +1112,7 @@ async function seed() {
         featureId: 'route-001',
         geometryType: SpatialFeatureType.MULTI_LINE,
         geometry: {
-          type: 'MultiLineString',
+          type: 'MultiLine',
           coordinates: [
             [
               [-122.42, 37.76],
