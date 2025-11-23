@@ -35,7 +35,7 @@ export class ConflictDetail {
   featureId: string;
   mainVersion: any;
   branchVersion: any;
-  ancestorVersion: any | null; // State before divergence
+  ancestorVersion: any; // State before divergence
   conflictType: 'modified' | 'deleted' | 'both_modified';
 }
 
