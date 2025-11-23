@@ -35,7 +35,7 @@ export class ConflictDetail {
   featureId: string;
   mainVersion: any;
   branchVersion: any;
-  ancestorVersion: any | null;
+  ancestorVersion: any;
   conflictType: 'modified' | 'deleted' | 'both_modified';
 }
 
