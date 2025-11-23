@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -548,6 +549,26 @@ export class BranchService {
     await queryRunner.startTransaction();
 
     try {
+      const lockedBranch = await queryRunner.manager.findOne(Branch, {
+        where: { id: branch.id },
+        lock: { mode: 'pessimistic_write' },
+      });
+
+      if (!lockedBranch) {
+        throw new NotFoundException('Branch not found');
+      }
+
+      const expectedHeadCommitId =
+        resolveDto.expectedHeadCommitId !== undefined
+          ? resolveDto.expectedHeadCommitId
+          : branch.headCommitId;
+
+      if (lockedBranch.headCommitId !== expectedHeadCommitId) {
+        throw new ConflictException(
+          'Branch has been updated by another user. Please refresh and try again.',
+        );
+      }
+
       const resolutionSummary = resolveDto.resolutions.map((r) => ({
         featureId: r.featureId,
         resolution: r.resolution,
