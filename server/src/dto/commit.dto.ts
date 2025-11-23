@@ -1,6 +1,7 @@
 import {
   IsArray,
   IsNotEmpty,
+  IsOptional,
   IsString,
   IsUUID,
   ValidateNested,
@@ -21,4 +22,8 @@ export class CreateCommitDto {
   @ValidateNested({ each: true })
   @Type(() => SpatialFeatureDto)
   features: SpatialFeatureDto[];
+
+  @IsOptional()
+  @IsUUID()
+  expectedHeadCommitId?: string;
 }
