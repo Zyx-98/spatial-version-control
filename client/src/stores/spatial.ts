@@ -170,6 +170,20 @@ export const useSpatialStore = defineStore("spatial", () => {
     }
   };
 
+  const parseShapefile = async (formData: FormData) => {
+    loading.value = true;
+    error.value = null;
+    try {
+      const response = await api.parseShapefile(formData);
+      return response;
+    } catch (err: any) {
+      error.value = err.response?.data?.message || "Failed to parse Shapefile";
+      throw err;
+    } finally {
+      loading.value = false;
+    }
+  };
+
   const clearCurrentBranch = () => {
     currentBranch.value = null;
     branchCanEdit.value = false;
@@ -201,6 +215,7 @@ export const useSpatialStore = defineStore("spatial", () => {
     createCommit,
     fetchBranchHistory,
     importGeoJson,
+    parseShapefile,
     clearCurrentBranch,
   };
 });

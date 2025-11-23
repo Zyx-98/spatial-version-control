@@ -114,12 +114,11 @@ export interface BranchWithPermissions {
 // Spatial Feature Types
 export enum SpatialFeatureType {
   POINT = "Point",
-  LINE = "Line",
-  LINESTRING = "LineString",
+  LINE = "LineString",
   POLYGON = "Polygon",
-  MULTIPOINT = "MultiPoint",
-  MULTILINE = "MultiLine",
-  MULTIPOLYGON = "MultiPolygon",
+  MULTI_POINT = "MultiPoint",
+  MULTI_LINE = "MultiLineString",
+  MULTI_POLYGON = "MultiPolygon",
 }
 
 export enum FeatureOperation {
@@ -244,15 +243,15 @@ export interface ReviewMergeRequestRequest {
   reviewComment?: string;
 }
 
-export interface ConflictResolution {
+export interface MergeConflictResolution {
   featureId: string;
-  resolution: "use_main" | "use_branch" | "custom";
+  resolution: ConflictResolutionStrategy;
   customData?: any;
 }
 
 export interface ResolveMergeConflictsRequest {
   mergeRequestId: string;
-  resolutions: ConflictResolution[];
+  resolutions: MergeConflictResolution[];
 }
 
 // GeoJSON Types

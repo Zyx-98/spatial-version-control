@@ -12,6 +12,7 @@ import {
 import { Response } from 'express';
 import { BranchService } from '../services/branch.service';
 import { GeoJsonService } from '../services/geojson.service';
+import { ShapefileService } from '../services/shapefile.service';
 import { CreateBranchDto, ResolveBranchConflictsDto } from '../dto/branch.dto';
 import { JwtAuthGuard } from '../guards/jwt-auth.guard';
 import { User } from '../entities';
@@ -23,6 +24,7 @@ export class BranchController {
   constructor(
     private readonly branchService: BranchService,
     private readonly geoJsonService: GeoJsonService,
+    private readonly shapefileService: ShapefileService,
   ) {}
 
   @Post()
@@ -87,5 +89,30 @@ export class BranchController {
 
     // Send GeoJSON with pretty formatting
     return res.send(JSON.stringify(geojson, null, 2));
+  }
+
+  @Get(':id/export/shapefile')
+  @Header('Content-Type', 'application/zip')
+  async exportShapefile(
+    @Param('id') branchId: string,
+    @CurrentUser() user: User,
+    @Res() res: Response,
+  ) {
+    const branch = await this.branchService.findOne(branchId, user);
+
+    const features = await this.branchService.getLatestFeatures(branchId);
+
+    const filename = branch.name.replace(/[^a-z0-9]/gi, '_');
+    const zipBuffer = await this.shapefileService.exportToShapefile(
+      features,
+      filename,
+    );
+
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${filename}_export.zip"`,
+    );
+
+    return res.send(zipBuffer);
   }
 }
