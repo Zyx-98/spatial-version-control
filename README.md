@@ -40,6 +40,7 @@
   - [Datasets](#datasets-1)
   - [Branch detail](#branch-detail)
   - [Commit detail](#commit-detail)
+  - [Create commit](#create-commit)
   - [Merge request detail](#merge-request-detail)
   - [Resolve merge conflicts](#resolve-merge-conflicts)
 - [TODO](#todo)
@@ -64,7 +65,8 @@ Designed for **high scalability**, the system uses:
 
 - **Multi-Department Support**: Organize users and datasets by departments with complete data isolation
 - **Role-Based Access Control**: Admin and Normal User roles with granular permissions
-- **Spatial Data Management**: Full support for Points, Lines, Polygons, MultiPoint, MultiLine, and MultiPolygon geometries
+- **Spatial Data Management**: Full support for standard GeoJSON geometry types (Point, LineString, Polygon, MultiPoint, MultiLineString, MultiPolygon)
+- **File Format Support**: Import and export GeoJSON and Shapefile formats with GDAL integration
 - **Git-Like Version Control**:
   - Create branches from main branch
   - Commit changes with detailed tracking
@@ -81,7 +83,7 @@ Designed for **high scalability**, the system uses:
 
 ### Interactive Map Editor
 - **Drawing Tools**: Create points, lines, and polygons directly on the map
-- **Geometry Support**: Point, Line, Polygon, MultiPoint, MultiLine, MultiPolygon
+- **Geometry Support**: Point, LineString, Polygon, MultiPoint, MultiLineString, MultiPolygon
 - **Edit Mode**: Move and reshape existing features
 - **Property Management**: Add and edit custom properties for each feature
 - **Real-time Visualization**: See changes immediately on the map
@@ -434,6 +436,9 @@ Error responses:
 ### Commit detail
 ![commit_detail](/screenshots/commit_view_screenshot.png)
 
+### Create commit
+![create_commit](/screenshots/create_commit_screenshot.png)
+
 ### Merge request detail
 ![merge_request_detail](/screenshots/merge_request_detail_screenshot.png)
 
@@ -468,9 +473,8 @@ Error responses:
   - [ ] Email notifications for merge request events
 
 - [ ] **Advanced Features**
-  - [ ] Bulk operations (import/export)
-  - [ ] CSV/GeoJSON import/export
-  - [ ] Shapefile support
+  - [x] GeoJSON import/export
+  - [x] Shapefile import/export with GDAL integration
   - [ ] Time-travel feature (view data at specific commit)
   - [ ] Comprehensive audit log
 
