@@ -226,7 +226,7 @@
       <div
         class="bg-white rounded-lg max-w-5xl w-full max-h-[90vh] overflow-y-auto"
       >
-        <EnhancedCommitChanges
+        <CommitChanges
           :commit="selectedCommitChanges.commit"
           :changes="selectedCommitChanges.changes"
         />
@@ -564,7 +564,7 @@ import { useSpatialStore } from "@/stores/spatial";
 import { useMergeRequestStore } from "@/stores/mergeRequest";
 import { format } from "date-fns";
 import MapViewer from "@/components/MapViewer.vue";
-import EnhancedCommitChanges from "@/components/EnhancedCommitChanges.vue";
+import CommitChanges from "@/components/CommitChanges.vue";
 import ConflictDiffView from "@/components/ConflictDiffView.vue";
 import api from "@/services/api";
 import type { CommitChanges as CommitChangesType } from "@/types";

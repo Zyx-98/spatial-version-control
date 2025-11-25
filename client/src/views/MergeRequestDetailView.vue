@@ -149,7 +149,7 @@
           ></div>
           <p class="mt-4 text-gray-600">Loading comparison...</p>
         </div>
-        <EnhancedBranchComparison
+        <BranchComparison
           v-else-if="branchComparison && mergeRequest"
           :summary="branchComparison.summary"
           :changes="branchComparison.changes"
@@ -412,7 +412,7 @@ import { useMergeRequestStore } from "@/stores/mergeRequest";
 import { MergeRequestStatus } from "@/types";
 import type { BranchComparison as BranchComparisonType } from "@/types";
 import { format } from "date-fns";
-import EnhancedBranchComparison from "@/components/EnhancedBranchComparison.vue";
+import BranchComparison from "@/components/BranchComparison.vue";
 import ConflictDiffView from "@/components/ConflictDiffView.vue";
 import api from "@/services/api";
 

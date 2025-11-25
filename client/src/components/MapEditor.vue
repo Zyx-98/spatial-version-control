@@ -2,7 +2,7 @@
   <div>
     <div
       :id="mapId"
-      :style="{ height: `${height}px` }"
+      :style="{ height: `${height}px`, cursor: mapCursor }"
       class="rounded-lg border-2 border-gray-300"
     ></div>
     <div class="mt-2 flex items-center justify-between text-sm">
@@ -50,9 +50,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, watch, onBeforeUnmount } from "vue";
-import L from "leaflet";
-import "leaflet/dist/leaflet.css";
+import { ref, onMounted, watch, onBeforeUnmount, computed } from "vue";
+import maplibregl from "maplibre-gl";
+import "maplibre-gl/dist/maplibre-gl.css";
 
 interface Props {
   height?: number;
@@ -75,28 +75,44 @@ const emit = defineEmits<{
 }>();
 
 const mapId = ref(`map-editor-${Math.random().toString(36).substr(2, 9)}`);
-let map: L.Map | null = null;
-let drawnLayer: L.LayerGroup | null = null;
-let permanentLayer: L.LayerGroup | null = null;
-let editLayer: L.LayerGroup | null = null;
-let currentDrawing: L.LatLng[] = [];
-let tempPolyline: L.Polyline | null = null;
+let map: maplibregl.Map | null = null;
+let currentDrawing: [number, number][] = [];
 let selectedFeatureIndex: number | null = null;
 let editingFeature = ref<any | null>(null);
-let editableLayer: L.Layer | null = null;
-let editMarkers: L.Marker[] = [];
+let editMarkers: maplibregl.Marker[] = [];
+let tempMarkers: maplibregl.Marker[] = [];
+let currentPopup: maplibregl.Popup | null = null;
+
+const mapCursor = computed(() => {
+  if (props.tool === "select" || props.tool === "edit") return "default";
+  return "crosshair";
+});
 
 const initMap = () => {
-  map = L.map(mapId.value).setView([37.7749, -122.4194], 13);
-
-  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-    attribution: "© OpenStreetMap contributors",
-    maxZoom: 19,
-  }).addTo(map);
-
-  permanentLayer = L.layerGroup().addTo(map);
-  drawnLayer = L.layerGroup().addTo(map);
-  editLayer = L.layerGroup().addTo(map);
+  map = new maplibregl.Map({
+    container: mapId.value,
+    style: {
+      version: 8,
+      sources: {
+        osm: {
+          type: "raster",
+          tiles: ["https://a.tile.openstreetmap.org/{z}/{x}/{y}.png"],
+          tileSize: 256,
+          attribution: "&copy; OpenStreetMap Contributors",
+          maxzoom: 19,
+        },
+      },
+      layers: [
+        {
+          id: "osm",
+          type: "raster",
+          source: "osm",
+        },
+      ],
+    },
+    center: [-122.4194, 37.7749],
+    zoom: 13,
+  });
 
   setupDrawingHandlers();
   setupKeyboardHandlers();
@@ -116,10 +132,8 @@ const setupKeyboardHandlers = () => {
       if (props.tool === "edit") {
         cancelGeometryEdit();
       } else {
-        // Cancel current drawing
         currentDrawing = [];
         clearTemporaryDrawing();
-        // Deselect feature
         if (selectedFeatureIndex !== null) {
           selectedFeatureIndex = null;
           editingFeature.value = null;
@@ -136,102 +150,161 @@ const setupKeyboardHandlers = () => {
 const setupDrawingHandlers = () => {
   if (!map) return;
 
-  map.on("click", (e: L.LeafletMouseEvent) => {
-    if (props.tool === "select") {
-      selectedFeatureIndex = null;
-      editingFeature.value = null;
-      renderPermanentFeatures();
-    } else if (props.tool !== "edit") {
-      handleMapClick(e.latlng);
-    }
-  });
+  let clickTimeout: any = null;
+  let clickCount = 0;
 
-  map.on("dblclick", (e: L.LeafletMouseEvent) => {
-    L.DomEvent.stop(e);
-    if (props.tool !== "select" && props.tool !== "edit") {
-      finishDrawing();
+  map.on("click", (e: maplibregl.MapMouseEvent) => {
+    clickCount++;
+
+    if (clickCount === 1) {
+      clickTimeout = setTimeout(() => {
+        // Single click
+        if (props.tool === "select") {
+          handleSelectClick(e);
+        } else if (props.tool !== "edit") {
+          handleMapClick([e.lngLat.lng, e.lngLat.lat]);
+        }
+        clickCount = 0;
+      }, 300);
+    } else if (clickCount === 2) {
+      // Double click
+      clearTimeout(clickTimeout);
+      if (props.tool !== "select" && props.tool !== "edit") {
+        finishDrawing();
+      }
+      clickCount = 0;
     }
   });
 };
 
-const handleMapClick = (latlng: L.LatLng) => {
-  if (!map || !drawnLayer) return;
+const handleSelectClick = (e: maplibregl.MapMouseEvent) => {
+  const features = map!.queryRenderedFeatures(e.point, {
+    layers: ["features-fill", "features-line", "features-point"],
+  });
 
-  currentDrawing.push(latlng);
+  if (features && features.length > 0) {
+    const clickedFeature = features[0];
+    const featureIndex = props.features.findIndex(
+      (f) => f.id === clickedFeature.properties?.featureId
+    );
+
+    if (featureIndex !== -1) {
+      selectedFeatureIndex = featureIndex;
+      editingFeature.value = props.features[featureIndex];
+      emit("featureSelected", featureIndex);
+      renderPermanentFeatures();
+
+      // Show popup
+      const feature = props.features[featureIndex];
+      const operationLabel = feature.operation || "existing";
+      const popupContent = `
+        <div class="p-2">
+          <p class="font-semibold">${feature.geometryType}</p>
+          <p class="text-sm text-gray-600">Status: ${operationLabel.toUpperCase()}</p>
+          ${feature.id ? `<p class="text-xs text-gray-500 mt-1">ID: ${feature.id.substring(0, 8)}...</p>` : ""}
+          <p class="text-sm text-blue-600 mt-2">✓ Selected - Click "Edit Geometry" to modify</p>
+        </div>
+      `;
+
+      if (currentPopup) {
+        currentPopup.remove();
+      }
+
+      currentPopup = new maplibregl.Popup()
+        .setLngLat(e.lngLat)
+        .setHTML(popupContent)
+        .addTo(map!);
+    }
+  } else {
+    selectedFeatureIndex = null;
+    editingFeature.value = null;
+    if (currentPopup) {
+      currentPopup.remove();
+      currentPopup = null;
+    }
+    renderPermanentFeatures();
+  }
+};
+
+const handleMapClick = (lnglat: [number, number]) => {
+  if (!map) return;
+
+  currentDrawing.push(lnglat);
+
+  // Add temporary marker
+  const markerEl = document.createElement("div");
+  markerEl.style.width = "10px";
+  markerEl.style.height = "10px";
+  markerEl.style.borderRadius = "50%";
+  markerEl.style.backgroundColor = "#3b82f6";
+  markerEl.style.border = "2px solid white";
+  markerEl.style.boxShadow = "0 0 4px rgba(0,0,0,0.5)";
+
+  const marker = new maplibregl.Marker({ element: markerEl })
+    .setLngLat(lnglat)
+    .addTo(map);
+
+  tempMarkers.push(marker);
 
   switch (props.tool) {
     case "point":
-      const marker = L.circleMarker(latlng, {
-        radius: 8,
-        fillColor: "#3b82f6",
-        color: "#ffffff",
-        weight: 2,
-        opacity: 1,
-        fillOpacity: 0.7,
-      });
-      drawnLayer.addLayer(marker);
-
       emit("featureCreated", {
         type: "Point",
-        coordinates: [latlng.lng, latlng.lat],
+        coordinates: lnglat,
       });
-
       currentDrawing = [];
       clearTemporaryDrawing();
       break;
 
     case "line":
-      if (tempPolyline) {
-        map.removeLayer(tempPolyline);
-      }
-      if (currentDrawing.length > 1) {
-        tempPolyline = L.polyline(currentDrawing, {
-          color: "#3b82f6",
-          weight: 3,
-          opacity: 0.7,
-          dashArray: "5, 10",
-        }).addTo(map);
-      }
-
-      const lineMarker = L.circleMarker(latlng, {
-        radius: 5,
-        fillColor: "#3b82f6",
-        color: "#ffffff",
-        weight: 2,
-        opacity: 1,
-        fillOpacity: 1,
-      });
-      drawnLayer.addLayer(lineMarker);
-      break;
-
     case "polygon":
-      if (tempPolyline) {
-        map.removeLayer(tempPolyline);
-      }
       if (currentDrawing.length > 1) {
-        tempPolyline = L.polyline(currentDrawing, {
-          color: "#3b82f6",
-          weight: 3,
-          opacity: 0.7,
-          dashArray: "5, 10",
-        }).addTo(map);
+        updateTemporaryLine();
       }
-
-      const polygonMarker = L.circleMarker(latlng, {
-        radius: 5,
-        fillColor: "#3b82f6",
-        color: "#ffffff",
-        weight: 2,
-        opacity: 1,
-        fillOpacity: 1,
-      });
-      drawnLayer.addLayer(polygonMarker);
       break;
   }
 };
 
+const updateTemporaryLine = () => {
+  if (!map) return;
+
+  // Remove existing temporary line
+  if (map.getSource("temp-line")) {
+    if (map.getLayer("temp-line")) {
+      map.removeLayer("temp-line");
+    }
+    map.removeSource("temp-line");
+  }
+
+  // Add new temporary line
+  const geojson: any = {
+    type: "Feature",
+    geometry: {
+      type: "LineString",
+      coordinates: currentDrawing,
+    },
+  };
+
+  map.addSource("temp-line", {
+    type: "geojson",
+    data: geojson,
+  });
+
+  map.addLayer({
+    id: "temp-line",
+    type: "line",
+    source: "temp-line",
+    paint: {
+      "line-color": "#3b82f6",
+      "line-width": 3,
+      "line-opacity": 0.7,
+      "line-dasharray": [2, 2],
+    },
+  });
+};
+
 const finishDrawing = () => {
-  if (!map || !drawnLayer) return;
+  if (!map) return;
 
   if (currentDrawing.length < 2) {
     currentDrawing = [];
@@ -245,7 +318,7 @@ const finishDrawing = () => {
       if (currentDrawing.length >= 2) {
         emit("featureCreated", {
           type: "LineString",
-          coordinates: currentDrawing.map((p) => [p.lng, p.lat]),
+          coordinates: currentDrawing,
         });
       }
       break;
@@ -255,7 +328,7 @@ const finishDrawing = () => {
         const closedDrawing = [...currentDrawing, currentDrawing[0]];
         emit("featureCreated", {
           type: "Polygon",
-          coordinates: [closedDrawing.map((p) => [p.lng, p.lat])],
+          coordinates: [closedDrawing],
         });
       }
       break;
@@ -265,111 +338,167 @@ const finishDrawing = () => {
 };
 
 const clearTemporaryDrawing = () => {
-  if (drawnLayer) {
-    drawnLayer.clearLayers();
-  }
-  if (tempPolyline && map) {
-    map.removeLayer(tempPolyline);
-    tempPolyline = null;
+  tempMarkers.forEach((marker) => marker.remove());
+  tempMarkers = [];
+
+  if (map && map.getSource("temp-line")) {
+    if (map.getLayer("temp-line")) {
+      map.removeLayer("temp-line");
+    }
+    map.removeSource("temp-line");
   }
 };
 
 const clearDrawings = () => {
   clearTemporaryDrawing();
-  if (permanentLayer) {
-    permanentLayer.clearLayers();
-  }
-  if (editLayer) {
-    editLayer.clearLayers();
-  }
+  editMarkers.forEach((marker) => marker.remove());
+  editMarkers = [];
   currentDrawing = [];
   selectedFeatureIndex = null;
   editingFeature.value = null;
-  editMarkers = [];
+  if (currentPopup) {
+    currentPopup.remove();
+    currentPopup = null;
+  }
+  renderPermanentFeatures();
 };
 
 const startEditingGeometry = () => {
-  if (!editingFeature.value || !map || !editLayer) return;
+  if (!editingFeature.value || !map) return;
 
   emit("toolChange", "edit");
-
-  // Clear permanent layer temporarily
-  permanentLayer?.clearLayers();
 
   const feature = editingFeature.value;
   const geometryType = feature.geometryType;
 
   if (geometryType === "Point") {
     const [lng, lat] = feature.geometry.coordinates;
-    const marker = createDraggableMarker([lat, lng], 0);
-    editLayer.addLayer(marker);
+    const marker = createDraggableMarker([lng, lat], 0);
+    editMarkers.push(marker);
   } else if (geometryType === "LineString" || geometryType === "Line") {
     const coords = feature.geometry.coordinates;
     coords.forEach((coord: number[], index: number) => {
-      const marker = createDraggableMarker([coord[1], coord[0]], index);
-      editLayer?.addLayer(marker);
+      const marker = createDraggableMarker([coord[0], coord[1]], index);
+      editMarkers.push(marker);
     });
-    // Draw the line
     updateEditPreview();
   } else if (geometryType === "Polygon") {
     const coords = feature.geometry.coordinates[0];
     coords.slice(0, -1).forEach((coord: number[], index: number) => {
-      const marker = createDraggableMarker([coord[1], coord[0]], index);
-      editLayer?.addLayer(marker);
+      const marker = createDraggableMarker([coord[0], coord[1]], index);
+      editMarkers.push(marker);
     });
-    // Draw the polygon
     updateEditPreview();
   }
+
+  // Hide permanent features during edit
+  renderPermanentFeatures();
 };
 
-const createDraggableMarker = (latlng: L.LatLngExpression, index: number) => {
-  const marker = L.marker(latlng, {
+const createDraggableMarker = (
+  lnglat: [number, number],
+  _index: number
+): maplibregl.Marker => {
+  const markerEl = document.createElement("div");
+  markerEl.style.width = "12px";
+  markerEl.style.height = "12px";
+  markerEl.style.borderRadius = "50%";
+  markerEl.style.backgroundColor = "#3b82f6";
+  markerEl.style.border = "2px solid white";
+  markerEl.style.boxShadow = "0 0 4px rgba(0,0,0,0.5)";
+  markerEl.style.cursor = "move";
+
+  const marker = new maplibregl.Marker({
+    element: markerEl,
     draggable: true,
-    icon: L.divIcon({
-      className: "edit-marker",
-      html: '<div style="background: #3b82f6; width: 12px; height: 12px; border-radius: 50%; border: 2px solid white; box-shadow: 0 0 4px rgba(0,0,0,0.5);"></div>',
-      iconSize: [12, 12],
-      iconAnchor: [6, 6],
-    }),
-  });
+  })
+    .setLngLat(lnglat)
+    .addTo(map!);
 
   marker.on("drag", () => {
     updateEditPreview();
   });
 
-  editMarkers[index] = marker;
   return marker;
 };
 
 const updateEditPreview = () => {
   if (!map || !editingFeature.value) return;
 
-  // Remove old preview
-  editLayer?.eachLayer((layer) => {
-    if (layer instanceof L.Polyline || layer instanceof L.Polygon) {
-      editLayer?.removeLayer(layer);
-    }
-  });
+  // Remove existing edit preview
+  if (map.getSource("edit-preview")) {
+    ["edit-preview-fill", "edit-preview-line"].forEach((layerId) => {
+      if (map!.getLayer(layerId)) {
+        map!.removeLayer(layerId);
+      }
+    });
+    map.removeSource("edit-preview");
+  }
 
-  const positions = editMarkers.map((m) => m.getLatLng());
+  const positions = editMarkers.map((m) => m.getLngLat());
+  const coordinates = positions.map((p) => [p.lng, p.lat]);
   const geometryType = editingFeature.value.geometryType;
 
+  let geojson: any;
+
   if (geometryType === "LineString" || geometryType === "Line") {
-    const line = L.polyline(positions, {
-      color: "#3b82f6",
-      weight: 3,
-      opacity: 0.7,
+    geojson = {
+      type: "Feature",
+      geometry: {
+        type: "LineString",
+        coordinates,
+      },
+    };
+
+    map.addSource("edit-preview", {
+      type: "geojson",
+      data: geojson,
     });
-    editLayer?.addLayer(line);
+
+    map.addLayer({
+      id: "edit-preview-line",
+      type: "line",
+      source: "edit-preview",
+      paint: {
+        "line-color": "#3b82f6",
+        "line-width": 3,
+        "line-opacity": 0.7,
+      },
+    });
   } else if (geometryType === "Polygon") {
-    const polygon = L.polygon(positions, {
-      fillColor: "#3b82f6",
-      color: "#3b82f6",
-      weight: 2,
-      opacity: 0.7,
-      fillOpacity: 0.3,
+    geojson = {
+      type: "Feature",
+      geometry: {
+        type: "Polygon",
+        coordinates: [coordinates],
+      },
+    };
+
+    map.addSource("edit-preview", {
+      type: "geojson",
+      data: geojson,
     });
-    editLayer?.addLayer(polygon);
+
+    map.addLayer({
+      id: "edit-preview-fill",
+      type: "fill",
+      source: "edit-preview",
+      paint: {
+        "fill-color": "#3b82f6",
+        "fill-opacity": 0.3,
+      },
+    });
+
+    map.addLayer({
+      id: "edit-preview-line",
+      type: "line",
+      source: "edit-preview",
+      paint: {
+        "line-color": "#3b82f6",
+        "line-width": 2,
+        "line-opacity": 0.7,
+      },
+    });
   }
 };
 
@@ -380,15 +509,15 @@ const saveGeometryChanges = () => {
   const geometryType = editingFeature.value.geometryType;
 
   if (geometryType === "Point") {
-    const latlng = editMarkers[0].getLatLng();
+    const lnglat = editMarkers[0].getLngLat();
     newGeometry = {
       type: "Point",
-      coordinates: [latlng.lng, latlng.lat],
+      coordinates: [lnglat.lng, lnglat.lat],
     };
   } else if (geometryType === "LineString" || geometryType === "Line") {
     const coordinates = editMarkers.map((m) => {
-      const latlng = m.getLatLng();
-      return [latlng.lng, latlng.lat];
+      const lnglat = m.getLngLat();
+      return [lnglat.lng, lnglat.lat];
     });
     newGeometry = {
       type: "LineString",
@@ -396,10 +525,9 @@ const saveGeometryChanges = () => {
     };
   } else if (geometryType === "Polygon") {
     const coordinates = editMarkers.map((m) => {
-      const latlng = m.getLatLng();
-      return [latlng.lng, latlng.lat];
+      const lnglat = m.getLngLat();
+      return [lnglat.lng, lnglat.lat];
     });
-    // Close the polygon
     coordinates.push(coordinates[0]);
     newGeometry = {
       type: "Polygon",
@@ -412,8 +540,19 @@ const saveGeometryChanges = () => {
 };
 
 const cancelGeometryEdit = () => {
-  editLayer?.clearLayers();
+  editMarkers.forEach((marker) => marker.remove());
   editMarkers = [];
+
+  // Remove edit preview
+  if (map && map.getSource("edit-preview")) {
+    ["edit-preview-fill", "edit-preview-line"].forEach((layerId) => {
+      if (map!.getLayer(layerId)) {
+        map!.removeLayer(layerId);
+      }
+    });
+    map.removeSource("edit-preview");
+  }
+
   editingFeature.value = null;
   selectedFeatureIndex = null;
   emit("toolChange", "select");
@@ -436,141 +575,167 @@ const getFeatureColor = (feature: any, isSelected: boolean) => {
 };
 
 const renderPermanentFeatures = () => {
-  if (!permanentLayer || !map) return;
-  if (props.tool === "edit") return; // Don't render during edit
+  if (!map || !map.loaded()) return;
 
-  permanentLayer.clearLayers();
-
-  props.features.forEach((feature, index) => {
-    let layer: L.Layer | null = null;
-    const isSelected = index === selectedFeatureIndex;
-    const color = getFeatureColor(feature, isSelected);
-    const opacity = feature.operation === "delete" ? 0.4 : 0.7;
-    const weight = isSelected ? 4 : 2;
-
-    try {
-      switch (feature.geometryType) {
-        case "Point":
-          const [lng, lat] = feature.geometry.coordinates;
-          layer = L.circleMarker([lat, lng], {
-            radius: isSelected ? 10 : 8,
-            fillColor: color,
-            color: "#ffffff",
-            weight: weight,
-            opacity: 1,
-            fillOpacity: opacity,
-          });
-          break;
-
-        case "Line":
-        case "LineString":
-          const lineCoords = feature.geometry.coordinates.map(
-            (c: number[]) => [c[1], c[0]] as L.LatLngExpression
-          );
-          layer = L.polyline(lineCoords, {
-            color: color,
-            weight: isSelected ? 5 : 3,
-            opacity: opacity,
-          });
-          break;
-
-        case "Polygon":
-          const polygonCoords = feature.geometry.coordinates[0].map(
-            (c: number[]) => [c[1], c[0]] as L.LatLngExpression
-          );
-          layer = L.polygon(polygonCoords, {
-            fillColor: color,
-            color: color,
-            weight: weight,
-            opacity: opacity,
-            fillOpacity: opacity * 0.5,
-          });
-          break;
-      }
-
-      if (layer) {
-        layer.on("click", (e) => {
-          L.DomEvent.stopPropagation(e);
-          if (props.tool === "select") {
-            selectedFeatureIndex = index;
-            editingFeature.value = feature;
-            emit("featureSelected", index);
-            renderPermanentFeatures();
-          }
-        });
-
-        const operationLabel = feature.operation || "existing";
-        const popupContent = `
-          <div class="p-2">
-            <p class="font-semibold">${feature.geometryType}</p>
-            <p class="text-sm text-gray-600">Status: ${operationLabel.toUpperCase()}</p>
-            ${feature.featureId ? `<p class="text-xs text-gray-500 mt-1">ID: ${feature.featureId.substring(0, 8)}...</p>` : ""}
-            ${isSelected ? '<p class="text-sm text-blue-600 mt-2">✓ Selected - Click "Edit Geometry" to modify</p>' : '<p class="text-sm text-gray-500 mt-2">Click to select</p>'}
-          </div>
-        `;
-        layer.bindPopup(popupContent);
-
-        layer.on("mouseover", function () {
-          if (map && props.tool === "select") {
-            (map as any).getContainer().style.cursor = "pointer";
-          }
-        });
-        layer.on("mouseout", function () {
-          if (map) {
-            (map as any).getContainer().style.cursor =
-              props.tool === "select" ? "default" : "crosshair";
-          }
-        });
-
-        permanentLayer?.addLayer(layer);
-      }
-    } catch (error) {
-      console.error("Error rendering feature:", error);
+  // Remove existing layers and sources
+  ["features-fill", "features-line", "features-point"].forEach((layerId) => {
+    if (map!.getLayer(layerId)) {
+      map!.removeLayer(layerId);
     }
   });
 
+  if (map.getSource("features")) {
+    map.removeSource("features");
+  }
+
+  if (props.tool === "edit" || props.features.length === 0) return;
+
+  // Convert features to GeoJSON
+  const geojson = {
+    type: "FeatureCollection",
+    features: props.features.map((feature, index) => {
+      const isSelected = index === selectedFeatureIndex;
+      const color = getFeatureColor(feature, isSelected);
+      const opacity = feature.operation === "delete" ? 0.4 : 0.7;
+
+      return {
+        type: "Feature",
+        id: feature.id,
+        geometry: {
+          type:
+            feature.geometryType === "Line"
+              ? "LineString"
+              : feature.geometryType,
+          coordinates: feature.geometry.coordinates,
+        },
+        properties: {
+          ...feature.properties,
+          color,
+          opacity,
+          isSelected,
+          index,
+          operation: feature.operation,
+          geometryType: feature.geometryType,
+          featureId: feature.id,
+        },
+      };
+    }),
+  };
+
+  map.addSource("features", {
+    type: "geojson",
+    data: geojson as any,
+  });
+
+  // Add fill layer for polygons
+  map.addLayer({
+    id: "features-fill",
+    type: "fill",
+    source: "features",
+    filter: ["in", ["geometry-type"], ["literal", ["Polygon", "MultiPolygon"]]],
+    paint: {
+      "fill-color": ["get", "color"],
+      "fill-opacity": [
+        "*",
+        ["get", "opacity"],
+        0.5,
+      ],
+    },
+  });
+
+  // Add line layer
+  map.addLayer({
+    id: "features-line",
+    type: "line",
+    source: "features",
+    filter: [
+      "in",
+      ["geometry-type"],
+      ["literal", ["LineString", "MultiLineString", "Polygon", "MultiPolygon"]],
+    ],
+    paint: {
+      "line-color": ["get", "color"],
+      "line-width": [
+        "case",
+        ["get", "isSelected"],
+        5,
+        3,
+      ],
+      "line-opacity": ["get", "opacity"],
+    },
+  });
+
+  // Add circle layer for points
+  map.addLayer({
+    id: "features-point",
+    type: "circle",
+    source: "features",
+    filter: ["in", ["geometry-type"], ["literal", ["Point", "MultiPoint"]]],
+    paint: {
+      "circle-radius": [
+        "case",
+        ["get", "isSelected"],
+        10,
+        8,
+      ],
+      "circle-color": ["get", "color"],
+      "circle-opacity": ["get", "opacity"],
+      "circle-stroke-color": "#ffffff",
+      "circle-stroke-width": [
+        "case",
+        ["get", "isSelected"],
+        4,
+        2,
+      ],
+    },
+  });
+
+  // Change cursor on hover for select tool
+  if (props.tool === "select") {
+    ["features-fill", "features-line", "features-point"].forEach((layerId) => {
+      map!.on("mouseenter", layerId, () => {
+        map!.getCanvas().style.cursor = "pointer";
+      });
+
+      map!.on("mouseleave", layerId, () => {
+        map!.getCanvas().style.cursor = "";
+      });
+    });
+  }
+
   // Auto-fit bounds
-  if (
-    props.features.length > 0 &&
-    props.features.some((f) => f.operation !== "delete")
-  ) {
-    try {
-      const visibleFeatures = props.features.filter(
-        (f) => f.operation !== "delete"
-      );
-      if (visibleFeatures.length > 0) {
-        const bounds: L.LatLngBounds[] = [];
+  if (props.features.length > 0) {
+    const visibleFeatures = props.features.filter(
+      (f) => f.operation !== "delete"
+    );
 
-        visibleFeatures.forEach((feature) => {
-          try {
-            if (feature.geometryType === "Point") {
-              const [lng, lat] = feature.geometry.coordinates;
-              bounds.push(L.latLngBounds([lat, lng], [lat, lng]));
-            } else if (feature.geometryType === "LineString") {
-              const coords = feature.geometry.coordinates.map(
-                (c: number[]) => [c[1], c[0]] as L.LatLngExpression
-              );
-              const polyline = L.polyline(coords);
-              bounds.push(polyline.getBounds());
-            } else if (feature.geometryType === "Polygon") {
-              const coords = feature.geometry.coordinates[0].map(
-                (c: number[]) => [c[1], c[0]] as L.LatLngExpression
-              );
-              const polygon = L.polygon(coords);
-              bounds.push(polygon.getBounds());
-            }
-          } catch (e) {
-            // Skip problematic features
-          }
-        });
-
-        if (bounds.length > 0) {
-          const combinedBounds = bounds.reduce((acc, b) => acc.extend(b));
-          map.fitBounds(combinedBounds, { padding: [50, 50], maxZoom: 15 });
+    if (visibleFeatures.length > 0) {
+      const coordinates = visibleFeatures.flatMap((feature) => {
+        const coords = feature.geometry.coordinates;
+        switch (feature.geometryType) {
+          case "Point":
+            return [coords as [number, number]];
+          case "LineString":
+          case "Line":
+            return coords as [number, number][];
+          case "Polygon":
+            return coords[0] as [number, number][];
+          default:
+            return [];
         }
+      });
+
+      if (coordinates.length > 0) {
+        const bounds = coordinates.reduce(
+          (bounds, coord) => bounds.extend(coord as [number, number]),
+          new maplibregl.LngLatBounds(coordinates[0], coordinates[0])
+        );
+
+        map.fitBounds(bounds, {
+          padding: 50,
+          maxZoom: 15,
+        });
       }
-    } catch (e) {
-      // Ignore errors
     }
   }
 };
@@ -584,26 +749,34 @@ watch(
     if (newTool !== "select" && newTool !== "edit") {
       selectedFeatureIndex = null;
       editingFeature.value = null;
+      if (currentPopup) {
+        currentPopup.remove();
+        currentPopup = null;
+      }
     }
 
     if (newTool !== "edit") {
-      editLayer?.clearLayers();
+      editMarkers.forEach((marker) => marker.remove());
       editMarkers = [];
+
+      if (map && map.getSource("edit-preview")) {
+        ["edit-preview-fill", "edit-preview-line"].forEach((layerId) => {
+          if (map!.getLayer(layerId)) {
+            map!.removeLayer(layerId);
+          }
+        });
+        map.removeSource("edit-preview");
+      }
     }
 
     renderPermanentFeatures();
-
-    if (map) {
-      (map as any).getContainer().style.cursor =
-        newTool === "select" || newTool === "edit" ? "default" : "crosshair";
-    }
   }
 );
 
 watch(
   () => props.features,
   () => {
-    if (props.tool !== "edit") {
+    if (props.tool !== "edit" && map && map.loaded()) {
       renderPermanentFeatures();
     }
   },
@@ -612,7 +785,9 @@ watch(
 
 onMounted(() => {
   initMap();
-  renderPermanentFeatures();
+  map!.on("load", () => {
+    renderPermanentFeatures();
+  });
 });
 
 onBeforeUnmount(() => {
@@ -620,6 +795,13 @@ onBeforeUnmount(() => {
   if (handler) {
     document.removeEventListener("keydown", handler);
     delete (window as any)._mapEditorKeyHandler;
+  }
+
+  tempMarkers.forEach((marker) => marker.remove());
+  editMarkers.forEach((marker) => marker.remove());
+
+  if (currentPopup) {
+    currentPopup.remove();
   }
 
   if (map) {
@@ -633,11 +815,75 @@ defineExpose({
 </script>
 
 <style scoped>
-:deep(.leaflet-container) {
-  cursor: crosshair;
+/* MapLibre GL popup styles */
+:deep(.maplibregl-popup) {
+  z-index: 10;
 }
 
-:deep(.edit-marker) {
-  cursor: move !important;
+:deep(.maplibregl-popup-content) {
+  padding: 0;
+  font-family: inherit;
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  max-width: 300px;
+  min-width: 200px;
+}
+
+:deep(.maplibregl-popup-close-button) {
+  font-size: 18px;
+  padding: 8px;
+  color: #6b7280;
+  right: 4px;
+  top: 4px;
+  width: 28px;
+  height: 28px;
+  border-radius: 4px;
+  transition: all 0.2s;
+}
+
+:deep(.maplibregl-popup-close-button):hover {
+  background-color: #f3f4f6;
+  color: #374151;
+}
+
+:deep(.maplibregl-popup-tip) {
+  border-top-color: white;
+}
+
+:deep(.maplibregl-popup-content .p-2) {
+  padding: 12px;
+}
+
+:deep(.maplibregl-popup-content .font-semibold) {
+  color: #111827;
+  font-size: 16px;
+  margin-bottom: 8px;
+}
+
+:deep(.maplibregl-popup-content .text-sm) {
+  font-size: 13px;
+  margin-bottom: 4px;
+  color: #4b5563;
+}
+
+:deep(.maplibregl-popup-content .text-gray-600) {
+  color: #6b7280;
+}
+
+:deep(.maplibregl-popup-content .text-blue-600) {
+  color: #2563eb;
+}
+
+:deep(.maplibregl-popup-content .font-medium) {
+  font-weight: 500;
+  color: #111827;
+}
+
+:deep(.maplibregl-popup-content .text-xs) {
+  font-size: 11px;
+}
+
+:deep(.maplibregl-popup-content .text-gray-500) {
+  color: #6b7280;
 }
 </style>

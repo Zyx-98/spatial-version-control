@@ -8,10 +8,13 @@
   }
 }
 
-/* Leaflet fix for marker icons */
+/* MapLibre GL custom styles */
 @layer utilities {
-  .leaflet-container .leaflet-marker-icon {
-    margin-left: -12px;
-    margin-top: -41px;
+  .maplibregl-map {
+    font-family: inherit;
+  }
+
+  .maplibregl-ctrl-attrib {
+    font-size: 11px;
   }
 }
