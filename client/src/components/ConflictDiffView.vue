@@ -110,9 +110,6 @@
       >
         <span class="text-green-600">+{{ diffStats.additions }} additions</span>
         <span class="text-red-600">-{{ diffStats.deletions }} deletions</span>
-        <span v-if="diffStats.modifications" class="text-yellow-600"
-          >~{{ diffStats.modifications }} modified</span
-        >
       </div>
     </div>
   </div>
