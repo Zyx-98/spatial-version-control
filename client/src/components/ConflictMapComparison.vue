@@ -17,7 +17,9 @@
     <div class="border-2 border-green-300 rounded-lg overflow-hidden">
       <div class="bg-green-50 px-3 py-2 border-b border-green-200">
         <div class="flex items-center justify-between">
-          <span class="text-sm font-semibold text-green-900">Feature Branch</span>
+          <span class="text-sm font-semibold text-green-900"
+            >Feature Branch</span
+          >
           <span class="text-xs px-2 py-1 bg-green-200 text-green-800 rounded">
             {{ branchGeometryType }}
           </span>
@@ -30,8 +32,8 @@
 
 <script setup lang="ts">
 import { onMounted, onBeforeUnmount, ref, computed } from "vue";
-import L from "leaflet";
-import "leaflet/dist/leaflet.css";
+import maplibregl from "maplibre-gl";
+import "maplibre-gl/dist/maplibre-gl.css";
 
 interface Props {
   mainGeometry: any;
@@ -40,95 +42,195 @@ interface Props {
 
 const props = defineProps<Props>();
 
-const mainMapId = ref(`main-map-${Math.random().toString(36).substr(2, 9)}`);
-const branchMapId = ref(`branch-map-${Math.random().toString(36).substr(2, 9)}`);
+const mainMapId = ref(
+  `main-map-${Math.random().toString(36).substring(2, 11)}`
+);
+const branchMapId = ref(
+  `branch-map-${Math.random().toString(36).substring(2, 11)}`
+);
 
-let mainMap: L.Map | null = null;
-let branchMap: L.Map | null = null;
-let mainLayer: L.Layer | null = null;
-let branchLayer: L.Layer | null = null;
+let mainMap: maplibregl.Map | null = null;
+let branchMap: maplibregl.Map | null = null;
+let isSyncing = false;
 
 const mainGeometryType = computed(() => props.mainGeometry?.type || "Unknown");
-const branchGeometryType = computed(() => props.branchGeometry?.type || "Unknown");
+const branchGeometryType = computed(
+  () => props.branchGeometry?.type || "Unknown"
+);
 
-const createMap = (mapId: string): L.Map => {
-  const map = L.map(mapId, {
+const createMap = (mapId: string): maplibregl.Map => {
+  return new maplibregl.Map({
+    container: mapId,
+    style: {
+      version: 8,
+      sources: {
+        osm: {
+          type: "raster",
+          tiles: ["https://a.tile.openstreetmap.org/{z}/{x}/{y}.png"],
+          tileSize: 256,
+          attribution: "&copy; OpenStreetMap Contributors",
+          maxzoom: 19,
+        },
+      },
+      layers: [
+        {
+          id: "osm",
+          type: "raster",
+          source: "osm",
+        },
+      ],
+    },
     center: [0, 0],
     zoom: 2,
-    zoomControl: true,
   });
-
-  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-    attribution: '© OpenStreetMap contributors',
-    maxZoom: 19,
-  }).addTo(map);
-
-  return map;
 };
 
-const getStyle = (color: string) => {
-  return {
-    color: color,
-    weight: 3,
-    opacity: 0.8,
-    fillColor: color,
-    fillOpacity: 0.3,
-  };
-};
+const addGeometryToMap = (
+  map: maplibregl.Map,
+  geometry: any,
+  color: string,
+  sourceId: string
+) => {
+  if (!geometry || !map.loaded()) return;
 
-const addGeometryToMap = (map: L.Map, geometry: any, color: string): L.Layer | null => {
-  if (!geometry) return null;
+  // Validate geometry has required properties
+  if (!geometry.type || !geometry.coordinates) {
+    return;
+  }
 
   try {
+    // Use FeatureCollection like other working components
     const geojson = {
-      type: "Feature",
-      geometry: geometry,
-      properties: {},
+      type: "FeatureCollection" as const,
+      features: [
+        {
+          type: "Feature" as const,
+          geometry: {
+            type: geometry.type,
+            coordinates: geometry.coordinates,
+          },
+          properties: { color, geometryType: geometry.type },
+        },
+      ],
     };
 
-    const layer = L.geoJSON(geojson as any, {
-      style: () => getStyle(color),
-      pointToLayer: (feature, latlng) => {
-        return L.circleMarker(latlng, {
-          radius: 8,
-          fillColor: color,
-          color: color,
-          weight: 2,
-          opacity: 0.8,
-          fillOpacity: 0.6,
-        });
+    // Add source
+    map.addSource(sourceId, {
+      type: "geojson",
+      data: geojson as any,
+    });
+
+    // Add fill layer for polygons
+    map.addLayer({
+      id: `${sourceId}-fill`,
+      type: "fill",
+      source: sourceId,
+      filter: [
+        "in",
+        ["geometry-type"],
+        ["literal", ["Polygon", "MultiPolygon"]],
+      ],
+      paint: {
+        "fill-color": color,
+        "fill-opacity": 0.3,
       },
-    }).addTo(map);
+    });
 
-    // Fit bounds to the layer
-    const bounds = layer.getBounds();
-    if (bounds.isValid()) {
-      map.fitBounds(bounds, { padding: [30, 30] });
+    // Add line layer
+    map.addLayer({
+      id: `${sourceId}-line`,
+      type: "line",
+      source: sourceId,
+      filter: [
+        "in",
+        ["geometry-type"],
+        [
+          "literal",
+          ["LineString", "MultiLineString", "Polygon", "MultiPolygon"],
+        ],
+      ],
+      paint: {
+        "line-color": color,
+        "line-width": 3,
+        "line-opacity": 0.8,
+      },
+    });
+
+    // Add circle layer for points
+    map.addLayer({
+      id: `${sourceId}-point`,
+      type: "circle",
+      source: sourceId,
+      filter: ["in", ["geometry-type"], ["literal", ["Point", "MultiPoint"]]],
+      paint: {
+        "circle-radius": 8,
+        "circle-color": color,
+        "circle-opacity": 0.6,
+        "circle-stroke-color": color,
+        "circle-stroke-width": 2,
+        "circle-stroke-opacity": 0.8,
+      },
+    });
+
+    // Fit bounds to the geometry
+    const coordinates = extractCoordinates(geometry);
+    if (coordinates.length > 0) {
+      const bounds = coordinates.reduce(
+        (bounds, coord) => bounds.extend(coord),
+        new maplibregl.LngLatBounds(coordinates[0], coordinates[0])
+      );
+      map.fitBounds(bounds, { padding: 30 });
     }
-
-    return layer;
   } catch (error) {
     console.error("Error adding geometry to map:", error);
-    return null;
+  }
+};
+
+const extractCoordinates = (geometry: any): [number, number][] => {
+  if (!geometry || !geometry.coordinates) return [];
+
+  switch (geometry.type) {
+    case "Point":
+      return [geometry.coordinates as [number, number]];
+    case "LineString":
+      return geometry.coordinates as [number, number][];
+    case "Polygon":
+      return geometry.coordinates[0] as [number, number][];
+    case "MultiPoint":
+      return geometry.coordinates as [number, number][];
+    case "MultiLineString":
+      return (geometry.coordinates as [number, number][][]).flat();
+    case "MultiPolygon":
+      return (geometry.coordinates as [number, number][][][])
+        .map((polygon) => polygon[0])
+        .flat();
+    default:
+      return [];
   }
 };
 
 const syncMaps = () => {
   if (!mainMap || !branchMap) return;
 
-  mainMap.on("moveend", () => {
-    if (branchMap && mainMap) {
-      const center = mainMap.getCenter();
-      const zoom = mainMap.getZoom();
-      branchMap.setView(center, zoom, { animate: false });
+  mainMap.on("move", () => {
+    if (branchMap && mainMap && !isSyncing) {
+      isSyncing = true;
+      branchMap.setCenter(mainMap.getCenter());
+      branchMap.setZoom(mainMap.getZoom());
+      branchMap.setBearing(mainMap.getBearing());
+      branchMap.setPitch(mainMap.getPitch());
+      isSyncing = false;
     }
   });
 
-  branchMap.on("moveend", () => {
-    if (mainMap && branchMap) {
-      const center = branchMap.getCenter();
-      const zoom = branchMap.getZoom();
-      mainMap.setView(center, zoom, { animate: false });
+  branchMap.on("move", () => {
+    if (mainMap && branchMap && !isSyncing) {
+      isSyncing = true;
+      mainMap.setCenter(branchMap.getCenter());
+      mainMap.setZoom(branchMap.getZoom());
+      mainMap.setBearing(branchMap.getBearing());
+      mainMap.setPitch(branchMap.getPitch());
+      isSyncing = false;
     }
   });
 };
@@ -138,37 +240,52 @@ onMounted(() => {
   mainMap = createMap(mainMapId.value);
   branchMap = createMap(branchMapId.value);
 
-  // Add geometries
-  if (props.mainGeometry) {
-    mainLayer = addGeometryToMap(mainMap, props.mainGeometry, "#3b82f6");
-  }
+  // Wait for both maps to load
+  let mainLoaded = false;
+  let branchLoaded = false;
 
-  if (props.branchGeometry) {
-    branchLayer = addGeometryToMap(branchMap, props.branchGeometry, "#10b981");
-  }
+  mainMap.on("load", () => {
+    mainLoaded = true;
+    if (mainLoaded && props.mainGeometry) {
+      addGeometryToMap(
+        mainMap!,
+        props.mainGeometry,
+        "#3b82f6",
+        "main-geometry"
+      );
+    }
+  });
+
+  branchMap.on("load", () => {
+    branchLoaded = true;
+    if (branchLoaded && props.branchGeometry) {
+      addGeometryToMap(
+        branchMap!,
+        props.branchGeometry,
+        "#10b981",
+        "branch-geometry"
+      );
+    }
+  });
 
   // Synchronize map views
   syncMaps();
 
-  // Invalidate size after mount to ensure proper rendering
+  // Resize maps after mount
   setTimeout(() => {
-    mainMap?.invalidateSize();
-    branchMap?.invalidateSize();
+    mainMap?.resize();
+    branchMap?.resize();
   }, 100);
 });
 
 onBeforeUnmount(() => {
-  if (mainLayer && mainMap) {
-    mainMap.removeLayer(mainLayer);
-  }
-  if (branchLayer && branchMap) {
-    branchMap.removeLayer(branchLayer);
-  }
   if (mainMap) {
     mainMap.remove();
+    mainMap = null;
   }
   if (branchMap) {
     branchMap.remove();
+    branchMap = null;
   }
 });
 </script>
