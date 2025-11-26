@@ -80,8 +80,8 @@ const createMap = (mapId: string): maplibregl.Map => {
         },
       ],
     },
-    center: [0, 0],
-    zoom: 2,
+    center: [-122.4194, 37.7749],
+    zoom: 10,
   });
 };
 
