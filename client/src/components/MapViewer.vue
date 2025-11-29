@@ -3,20 +3,24 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, watch, onBeforeUnmount } from "vue";
+import { ref, onMounted, watch, onBeforeUnmount, computed } from "vue";
 import maplibregl from "maplibre-gl";
 import type { SpatialFeature } from "@/types";
+import { useMvtLayer } from "@/composables/useMvtLayer";
 import "maplibre-gl/dist/maplibre-gl.css";
 
 interface Props {
-  features: SpatialFeature[];
+  features?: SpatialFeature[];
+  branchId?: string;
   height?: number;
   editable?: boolean;
+  color?: string;
 }
 
 const props = withDefaults(defineProps<Props>(), {
   height: 400,
   editable: false,
+  color: "#3b82f6",
 });
 
 const emit = defineEmits<{
@@ -26,6 +30,12 @@ const emit = defineEmits<{
 
 const mapId = ref(`map-${Math.random().toString(36).substr(2, 9)}`);
 let map: maplibregl.Map | null = null;
+
+// MVT composable
+const { addBranchMvtLayer, removeMvtLayer, fitBranchBounds } = useMvtLayer();
+
+// Determine rendering mode
+const useMvt = computed(() => !!props.branchId);
 
 const initMap = () => {
   map = new maplibregl.Map({
@@ -95,6 +105,7 @@ const convertToGeoJSON = (features: SpatialFeature[]) => {
 
 const renderFeatures = () => {
   if (!map || !map.loaded()) return;
+  if (!props.features || props.features.length === 0) return;
 
   ["features-fill", "features-line", "features-point"].forEach((layerId) => {
     if (map!.getLayer(layerId)) {
@@ -105,8 +116,6 @@ const renderFeatures = () => {
   if (map.getSource("features")) {
     map.removeSource("features");
   }
-
-  if (props.features.length === 0) return;
 
   const geojson = convertToGeoJSON(props.features);
 
@@ -161,7 +170,7 @@ const renderFeatures = () => {
   });
 
   // Fit bounds
-  if (props.features.length > 0) {
+  if (props.features && props.features.length > 0) {
     const coordinates = props.features.flatMap((feature) => {
       const coords = feature.geometry.coordinates;
       switch (feature.geometryType) {
@@ -212,7 +221,19 @@ onMounted(() => {
 
   if (map) {
     map.on("load", () => {
-      renderFeatures();
+      if (useMvt.value && props.branchId) {
+        // Render MVT tiles
+        addBranchMvtLayer(map!, props.branchId, {
+          sourceId: `branch-${props.branchId}`,
+          color: props.color,
+        });
+
+        // Fit map to branch bounds
+        fitBranchBounds(map!, props.branchId);
+      } else if (props.features) {
+        // Render GeoJSON features
+        renderFeatures();
+      }
 
       map!.on("click", (e) => {
         const features = map!.queryRenderedFeatures(e.point, {
@@ -221,7 +242,7 @@ onMounted(() => {
 
         if (features.length > 0) {
           const clickedFeature = features[0];
-          const featureData = props.features.find(
+          const featureData = props.features?.find(
             (f) => f.id === clickedFeature.properties?.featureId
           );
 
@@ -264,6 +285,10 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   if (map) {
+    // Clean up MVT layers if in MVT mode
+    if (useMvt.value && props.branchId) {
+      removeMvtLayer(map, `branch-${props.branchId}`);
+    }
     map.remove();
   }
 });

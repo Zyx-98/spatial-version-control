@@ -32,16 +32,24 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onBeforeUnmount, watch } from "vue";
+import { ref, onMounted, onBeforeUnmount, watch, computed } from "vue";
 import maplibregl from "maplibre-gl";
 import { SpatialFeatureType, type SpatialFeature } from "@/types";
+import { useMvtLayer } from "@/composables/useMvtLayer";
 import "maplibre-gl/dist/maplibre-gl.css";
 
 interface Props {
-  leftFeatures: SpatialFeature[];
-  rightFeatures: SpatialFeature[];
+  // GeoJSON mode
+  leftFeatures?: SpatialFeature[];
+  rightFeatures?: SpatialFeature[];
+  // MVT mode
+  leftBranchId?: string;
+  rightBranchId?: string;
+  // Common props
   leftLabel?: string;
   rightLabel?: string;
+  leftColor?: string;
+  rightColor?: string;
   height?: number;
   highlightedFeatureId?: string | null;
 }
@@ -49,6 +57,8 @@ interface Props {
 const props = withDefaults(defineProps<Props>(), {
   leftLabel: "Before",
   rightLabel: "After",
+  leftColor: "#ef4444",
+  rightColor: "#10b981",
   height: 400,
   highlightedFeatureId: null,
 });
@@ -61,6 +71,12 @@ let rightMap: maplibregl.Map | null = null;
 let isSyncing = false;
 
 const syncMaps = ref(true);
+
+// MVT composable
+const { addBranchMvtLayer, removeMvtLayer, fitBranchBounds } = useMvtLayer();
+
+// Determine rendering mode
+const useMvt = computed(() => !!(props.leftBranchId || props.rightBranchId));
 
 const initMaps = () => {
   // Initialize left map
@@ -276,16 +292,46 @@ const renderFeaturesOnMap = (
 const renderFeatures = () => {
   if (!leftMap || !rightMap || !leftMap.loaded() || !rightMap.loaded()) return;
 
-  // Render left features (older/target version) in red
-  renderFeaturesOnMap(leftMap, props.leftFeatures, "#ef4444", "left-features");
+  if (useMvt.value) {
+    // MVT mode - render tiles
+    if (props.leftBranchId) {
+      addBranchMvtLayer(leftMap, props.leftBranchId, {
+        sourceId: `left-branch-${props.leftBranchId}`,
+        color: props.leftColor,
+      });
+    }
 
-  // Render right features (newer/source version) in green
-  renderFeaturesOnMap(rightMap, props.rightFeatures, "#10b981", "right-features");
+    if (props.rightBranchId) {
+      addBranchMvtLayer(rightMap, props.rightBranchId, {
+        sourceId: `right-branch-${props.rightBranchId}`,
+        color: props.rightColor,
+      });
+    }
 
-  fitBounds();
+    // Fit bounds to first branch that has data
+    if (props.leftBranchId) {
+      fitBranchBounds(leftMap, props.leftBranchId).then(() => {
+        if (props.rightBranchId && rightMap) {
+          isSyncing = true;
+          rightMap.setCenter(leftMap!.getCenter());
+          rightMap.setZoom(leftMap!.getZoom());
+          isSyncing = false;
+        }
+      });
+    } else if (props.rightBranchId) {
+      fitBranchBounds(rightMap, props.rightBranchId);
+    }
+  } else if (props.leftFeatures && props.rightFeatures) {
+    // GeoJSON mode - render features
+    renderFeaturesOnMap(leftMap, props.leftFeatures, props.leftColor, "left-features");
+    renderFeaturesOnMap(rightMap, props.rightFeatures, props.rightColor, "right-features");
+    fitBounds();
+  }
 };
 
 const fitBounds = () => {
+  if (!props.leftFeatures && !props.rightFeatures) return;
+
   const allCoordinates: [number, number][] = [];
 
   const collectCoordinates = (features: SpatialFeature[]) => {
@@ -307,8 +353,8 @@ const fitBounds = () => {
     });
   };
 
-  collectCoordinates(props.leftFeatures);
-  collectCoordinates(props.rightFeatures);
+  if (props.leftFeatures) collectCoordinates(props.leftFeatures);
+  if (props.rightFeatures) collectCoordinates(props.rightFeatures);
 
   if (allCoordinates.length > 0 && leftMap && rightMap) {
     const bounds = allCoordinates.reduce(
@@ -356,6 +402,16 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  // Clean up MVT layers if in MVT mode
+  if (useMvt.value) {
+    if (leftMap && props.leftBranchId) {
+      removeMvtLayer(leftMap, `left-branch-${props.leftBranchId}`);
+    }
+    if (rightMap && props.rightBranchId) {
+      removeMvtLayer(rightMap, `right-branch-${props.rightBranchId}`);
+    }
+  }
+
   if (leftMap) {
     leftMap.remove();
     leftMap = null;
