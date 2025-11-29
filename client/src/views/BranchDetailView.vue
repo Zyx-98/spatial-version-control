@@ -171,11 +171,21 @@
 
       <!-- Map -->
       <div class="bg-white rounded-lg shadow mb-6">
-        <div class="px-6 py-4 border-b border-gray-200">
+        <div class="px-6 py-4 border-b border-gray-200 flex justify-between items-center">
           <h2 class="text-xl font-semibold text-gray-900">Spatial Features</h2>
+          <span v-if="features.length > 100" class="text-sm px-3 py-1 bg-green-100 text-green-800 rounded-full">
+            🚀 Using Vector Tiles
+          </span>
         </div>
         <div class="p-4">
-          <MapViewer :features="features" :height="500" />
+          <!-- MapViewer auto-detects: MVT for branchId, GeoJSON for features array -->
+          <MapViewer
+            v-if="features.length > 100"
+            :branchId="branchId"
+            color="#3b82f6"
+            :height="500"
+          />
+          <MapViewer v-else :features="features" :height="500" />
         </div>
       </div>
 
@@ -224,13 +234,13 @@
       class="fixed inset-0 bg-gray-500 bg-opacity-75 flex items-center justify-center z-[1000]"
     >
       <div
-        class="bg-white rounded-lg max-w-5xl w-full max-h-[90vh] overflow-y-auto"
+        class="bg-white rounded-lg max-w-5xl w-full max-h-[90vh] overflow-hidden flex flex-col"
       >
         <CommitChanges
           :commit="selectedCommitChanges.commit"
           :changes="selectedCommitChanges.changes"
         />
-        <div class="p-4 border-t flex justify-end">
+        <div class="p-4 border-t flex justify-end bg-white flex-shrink-0">
           <button
             @click="showCommitChangesModal = false"
             class="px-4 py-2 bg-gray-600 text-white rounded-md hover:bg-gray-700"
