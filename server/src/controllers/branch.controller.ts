@@ -13,6 +13,7 @@ import { Response } from 'express';
 import { BranchService } from '../services/branch.service';
 import { GeoJsonService } from '../services/geojson.service';
 import { ShapefileService } from '../services/shapefile.service';
+import { MvtService } from '../services/mvt.service';
 import { CreateBranchDto, ResolveBranchConflictsDto } from '../dto/branch.dto';
 import { JwtAuthGuard } from '../guards/jwt-auth.guard';
 import { User } from '../entities';
@@ -25,6 +26,7 @@ export class BranchController {
     private readonly branchService: BranchService,
     private readonly geoJsonService: GeoJsonService,
     private readonly shapefileService: ShapefileService,
+    private readonly mvtService: MvtService,
   ) {}
 
   @Post()
@@ -114,5 +116,40 @@ export class BranchController {
     );
 
     return res.send(zipBuffer);
+  }
+
+  @Get(':id/tiles/:z/:x/:y.mvt')
+  @Header('Content-Type', 'application/x-protobuf')
+  async getTile(
+    @Param('id') branchId: string,
+    @Param('z') z: string,
+    @Param('x') x: string,
+    @Param('y') y: string,
+    @CurrentUser() user: User,
+    @Res() res: Response,
+  ) {
+    await this.branchService.findOne(branchId, user);
+
+    const tile = await this.mvtService.generateBranchTile(
+      branchId,
+      parseInt(z),
+      parseInt(x),
+      parseInt(y),
+    );
+
+    res.setHeader('Cache-Control', 'public, max-age=3600');
+    // Don't set Content-Encoding as we're not compressing the tiles
+    // The raw MVT protobuf data is sent as-is
+
+    return res.send(tile);
+  }
+
+  @Get(':id/bounds')
+  async getBounds(@Param('id') branchId: string, @CurrentUser() user: User) {
+    await this.branchService.findOne(branchId, user);
+
+    const bounds = await this.mvtService.getBranchBounds(branchId);
+
+    return { bounds };
   }
 }

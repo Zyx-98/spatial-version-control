@@ -1162,15 +1162,151 @@ async function seed() {
 
     console.log('Created 10 additional datasets');
 
+    // Dataset 12: MVT Performance Demo - Large Dataset
+    console.log(
+      '\nCreating MVT Performance Demo dataset with 5000 features...',
+    );
+    const mvtDemoDataset = await dataSource.getRepository(Dataset).save({
+      name: 'MVT Performance Demo',
+      description:
+        '🚀 Large dataset with 5000+ features to demonstrate MVT (Vector Tiles) performance. Compare: GeoJSON (~20MB) vs MVT tiles (~500KB per view)',
+      departmentId: department.id,
+    });
+
+    const mvtDemoMainBranch = await dataSource.getRepository(Branch).save({
+      name: 'main',
+      isMain: true,
+      datasetId: mvtDemoDataset.id,
+      createdById: adminUser.id,
+    });
+
+    const mvtDemoCommit = await dataSource.getRepository(Commit).save({
+      message: 'Generate 5000 point features for MVT performance testing',
+      branchId: mvtDemoMainBranch.id,
+      authorId: adminUser.id,
+    });
+
+    console.log('Generating 5000 point features (this may take a moment)...');
+
+    // Generate features in batches for better performance
+    const batchSize = 500;
+    const totalFeatures = 5000;
+    const centerLng = -122.4194;
+    const centerLat = 37.7749;
+    const spread = 0.15; // ~15km radius
+
+    for (let batch = 0; batch < totalFeatures / batchSize; batch++) {
+      const features: Partial<SpatialFeature>[] = [];
+
+      for (let i = 0; i < batchSize; i++) {
+        const featureIndex = batch * batchSize + i;
+
+        // Generate random position within circle
+        const angle = Math.random() * 2 * Math.PI;
+        const radius = Math.sqrt(Math.random()) * spread;
+        const lng = centerLng + radius * Math.cos(angle);
+        const lat = centerLat + radius * Math.sin(angle);
+
+        // Determine feature type based on index
+        const featureTypes = [
+          'sensor',
+          'lamp_post',
+          'tree',
+          'bench',
+          'trash_can',
+          'bike_rack',
+          'parking_meter',
+          'fire_hydrant',
+          'bus_stop',
+          'traffic_light',
+        ];
+        const typeIndex = featureIndex % featureTypes.length;
+        const featureType = featureTypes[typeIndex];
+
+        // Generate properties with a safe typed container
+        const properties: Record<string, unknown> = {
+          type: featureType,
+          id: `${featureType}-${featureIndex}`,
+          status: Math.random() > 0.1 ? 'active' : 'maintenance',
+          installed_date: new Date(
+            2020 + Math.floor(Math.random() * 5),
+            Math.floor(Math.random() * 12),
+            Math.floor(Math.random() * 28) + 1,
+          ).toISOString(),
+        };
+
+        // Add type-specific properties using Object.assign to keep type safety
+        switch (featureType) {
+          case 'sensor':
+            Object.assign(properties, {
+              sensor_type: ['temperature', 'air_quality', 'noise'][
+                Math.floor(Math.random() * 3)
+              ],
+              reading: Math.floor(Math.random() * 100),
+            });
+            break;
+          case 'lamp_post':
+            Object.assign(properties, {
+              brightness: Math.floor(Math.random() * 100),
+              power_w: 50 + Math.floor(Math.random() * 150),
+            });
+            break;
+          case 'tree':
+            Object.assign(properties, {
+              species: ['Oak', 'Pine', 'Maple', 'Birch', 'Cedar'][
+                Math.floor(Math.random() * 5)
+              ],
+              height_m: 5 + Math.floor(Math.random() * 20),
+            });
+            break;
+          case 'parking_meter':
+            Object.assign(properties, {
+              rate_per_hour: 2 + Math.floor(Math.random() * 6),
+              accepts_credit: Math.random() > 0.3,
+            });
+            break;
+        }
+
+        features.push({
+          featureId: `mvt-demo-${featureIndex}`,
+          geometryType: SpatialFeatureType.POINT,
+          geometry: {
+            type: 'Point',
+            coordinates: [lng, lat],
+          },
+          properties,
+          operation: FeatureOperation.CREATE,
+          commitId: mvtDemoCommit.id,
+        });
+      }
+
+      await dataSource.getRepository(SpatialFeature).save(features);
+
+      if ((batch + 1) % 2 === 0) {
+        console.log(`  Generated ${(batch + 1) * batchSize} features...`);
+      }
+    }
+
+    mvtDemoMainBranch.headCommitId = mvtDemoCommit.id;
+    await dataSource.getRepository(Branch).save(mvtDemoMainBranch);
+
+    console.log(
+      '✅ Created MVT Demo dataset with 5000 features for performance testing',
+    );
+
+    console.log('Created 11 additional datasets');
+
     console.log('\nSeeding Summary:');
     console.log('==================');
     console.log('Departments: 1');
     console.log('Users: 2 (1 admin, 1 user)');
-    console.log('Datasets: 11');
-    console.log('Main Branches: 11');
+    console.log('Datasets: 12 (including 1 MVT performance demo)');
+    console.log('Main Branches: 12');
     console.log('Feature Branches: 2');
-    console.log('Commits: 16 (includes 2 conflict scenarios)');
-    console.log('Spatial Features: 39');
+    console.log(
+      'Commits: 17 (includes 2 conflict scenarios + 1 large dataset)',
+    );
+    console.log('Spatial Features: 5,039 (39 standard + 5,000 for MVT demo)');
     console.log('Merge Requests: 2 (both with conflicts)');
     console.log('\nConflict Scenarios:');
     console.log('==================');
@@ -1184,11 +1320,33 @@ async function seed() {
       '   - Feature: Highway expanded to 8 lanes + Service road added',
     );
     console.log('   - Conflicts on both geometry and properties');
+    console.log('\nMVT Performance Demo:');
+    console.log('==================');
+    console.log('Dataset: "MVT Performance Demo"');
+    console.log(
+      'Features: 5,000 point features (sensors, lamp posts, trees, etc.)',
+    );
+    console.log(
+      'Purpose: Demonstrate vector tile performance vs traditional GeoJSON',
+    );
+    console.log('Expected Performance:');
+    console.log('  - GeoJSON: ~20MB download, 2-3s load time');
+    console.log('  - MVT: ~500KB per viewport, <500ms load time');
+    console.log('  - Use BranchMapView component to see MVT tiles in action!');
     console.log('\nLogin Credentials:');
     console.log('==================');
     console.log('Admin: username: admin, password: secret123');
     console.log('User: username: user, password: secret123');
-    console.log('\nDatabase seeding completed successfully!');
+    console.log('\n🎉 Database seeding completed successfully!');
+    console.log('\n💡 Quick Start:');
+    console.log('   1. Login with admin credentials');
+    console.log('   2. Navigate to "MVT Performance Demo" dataset');
+    console.log(
+      '   3. View the main branch to see 5,000 features render instantly!',
+    );
+    console.log(
+      '   4. Open Network tab to compare tile requests vs full GeoJSON\n',
+    );
 
     await dataSource.destroy();
   } catch (error) {
