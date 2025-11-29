@@ -272,6 +272,13 @@ class ApiService {
     );
     return response.data;
   }
+
+  async getBranchBounds(branchId: string): Promise<number[] | null> {
+    const response = await this.api.get<{ bounds: number[] | null }>(
+      `/branches/${branchId}/bounds`
+    );
+    return response.data.bounds;
+  }
 }
 
 export default new ApiService();
