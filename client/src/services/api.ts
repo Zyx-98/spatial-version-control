@@ -19,6 +19,7 @@ import type {
   ResolveMergeConflictsRequest,
   SpatialFeature,
   ConflictResolution,
+  DiffSummary,
 } from "@/types";
 
 const API_BASE_URL =
@@ -141,6 +142,18 @@ class ApiService {
   async getLatestFeatures(branchId: string): Promise<SpatialFeature[]> {
     const response = await this.api.get<SpatialFeature[]>(
       `/branches/${branchId}/features`
+    );
+    return response.data;
+  }
+
+  async getBranchDiffSummary(
+    sourceBranchId: string,
+    targetBranchId: string,
+    bbox?: string
+  ): Promise<DiffSummary> {
+    const response = await this.api.get<DiffSummary>(
+      `/branches/${sourceBranchId}/diff/${targetBranchId}/summary`,
+      { params: { bbox } }
     );
     return response.data;
   }

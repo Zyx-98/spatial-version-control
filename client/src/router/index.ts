@@ -58,6 +58,12 @@ const routes: RouteRecordRaw[] = [
     component: () => import("@/views/MergeRequestDetailView.vue"),
     meta: { requiresAuth: true },
   },
+  {
+    path: "/branch-comparison",
+    name: "BranchComparison",
+    component: () => import("@/views/BranchComparisonView.vue"),
+    meta: { requiresAuth: true },
+  },
 ];
 
 const router = createRouter({

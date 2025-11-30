@@ -14,6 +14,7 @@ import { BranchService } from '../services/branch.service';
 import { GeoJsonService } from '../services/geojson.service';
 import { ShapefileService } from '../services/shapefile.service';
 import { MvtService } from '../services/mvt.service';
+import { DiffService } from '../services/diff.service';
 import { CreateBranchDto, ResolveBranchConflictsDto } from '../dto/branch.dto';
 import { JwtAuthGuard } from '../guards/jwt-auth.guard';
 import { User } from '../entities';
@@ -27,6 +28,7 @@ export class BranchController {
     private readonly geoJsonService: GeoJsonService,
     private readonly shapefileService: ShapefileService,
     private readonly mvtService: MvtService,
+    private readonly diffService: DiffService,
   ) {}
 
   @Post()
@@ -138,8 +140,6 @@ export class BranchController {
     );
 
     res.setHeader('Cache-Control', 'public, max-age=3600');
-    // Don't set Content-Encoding as we're not compressing the tiles
-    // The raw MVT protobuf data is sent as-is
 
     return res.send(tile);
   }
@@ -151,5 +151,52 @@ export class BranchController {
     const bounds = await this.mvtService.getBranchBounds(branchId);
 
     return { bounds };
+  }
+
+  @Get(':id/diff/:targetId/summary')
+  async getDiffSummary(
+    @Param('id') sourceBranchId: string,
+    @Param('targetId') targetBranchId: string,
+    @Query('bbox') bbox: string | undefined,
+    @CurrentUser() user: User,
+  ) {
+    await Promise.all([
+      this.branchService.findOne(sourceBranchId, user),
+      this.branchService.findOne(targetBranchId, user),
+    ]);
+
+    return this.diffService.getDiffSummary(
+      sourceBranchId,
+      targetBranchId,
+      bbox,
+    );
+  }
+
+  @Get(':id/diff/:targetId/tiles/:z/:x/:y.mvt')
+  @Header('Content-Type', 'application/x-protobuf')
+  async getDiffTile(
+    @Param('id') sourceBranchId: string,
+    @Param('targetId') targetBranchId: string,
+    @Param('z') z: string,
+    @Param('x') x: string,
+    @Param('y') y: string,
+    @CurrentUser() user: User,
+    @Res() res: Response,
+  ) {
+    await Promise.all([
+      this.branchService.findOne(sourceBranchId, user),
+      this.branchService.findOne(targetBranchId, user),
+    ]);
+
+    const tile = await this.mvtService.generateDiffTile(
+      sourceBranchId,
+      targetBranchId,
+      parseInt(z),
+      parseInt(x),
+      parseInt(y),
+    );
+
+    res.setHeader('Cache-Control', 'public, max-age=3600');
+    return res.send(tile);
   }
 }

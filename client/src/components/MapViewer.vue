@@ -3,30 +3,23 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, watch, onBeforeUnmount, computed } from "vue";
+import { ref, onMounted, onBeforeUnmount, computed } from "vue";
 import maplibregl from "maplibre-gl";
 import type { SpatialFeature } from "@/types";
 import { useMvtLayer } from "@/composables/useMvtLayer";
 import "maplibre-gl/dist/maplibre-gl.css";
 
 interface Props {
-  features?: SpatialFeature[];
   branchId?: string;
+  features?: SpatialFeature[];
   height?: number;
-  editable?: boolean;
   color?: string;
 }
 
 const props = withDefaults(defineProps<Props>(), {
   height: 400,
-  editable: false,
   color: "#3b82f6",
 });
-
-const emit = defineEmits<{
-  featureClick: [feature: SpatialFeature];
-  featureCreated: [geometry: any];
-}>();
 
 const mapId = ref(`map-${Math.random().toString(36).substr(2, 9)}`);
 let map: maplibregl.Map | null = null;
@@ -34,7 +27,7 @@ let map: maplibregl.Map | null = null;
 // MVT composable
 const { addBranchMvtLayer, removeMvtLayer, fitBranchBounds } = useMvtLayer();
 
-// Determine rendering mode
+// Prefer MVT when branchId is available
 const useMvt = computed(() => !!props.branchId);
 
 const initMap = () => {
@@ -67,92 +60,49 @@ const initMap = () => {
   map.on("error", (e) => {
     console.error("MapLibre error:", e);
   });
+
+  // Add navigation controls
+  map.addControl(new maplibregl.NavigationControl(), 'top-right');
 };
 
-const getColor = (operation: string) => {
-  switch (operation) {
-    case "create":
-      return "#10b981"; // green
-    case "update":
-      return "#3b82f6"; // blue
-    case "delete":
-      return "#ef4444"; // red
-    default:
-      return "#6b7280"; // gray
-  }
-};
+const renderGeoJSON = () => {
+  if (!map || !props.features || props.features.length === 0) return;
 
-const convertToGeoJSON = (features: SpatialFeature[]) => {
-  return {
+  const geojson = {
     type: "FeatureCollection" as const,
-    features: features.map((feature) => ({
+    features: props.features.map((f) => ({
       type: "Feature" as const,
-      id: feature.id,
-      geometry: {
-        type: feature.geometryType,
-        coordinates: feature.geometry.coordinates,
-      },
-      properties: {
-        ...feature.properties,
-        operation: feature.operation,
-        color: getColor(feature.operation), // Add color property
-        featureId: feature.id,
-        geometryType: feature.geometryType,
-      },
+      geometry: { type: f.geometryType, coordinates: f.geometry.coordinates },
+      properties: { ...f.properties, color: props.color, featureId: f.id },
     })),
   };
-};
 
-const renderFeatures = () => {
-  if (!map || !map.loaded()) return;
-  if (!props.features || props.features.length === 0) return;
-
+  // Remove existing layers if they exist
   ["features-fill", "features-line", "features-point"].forEach((layerId) => {
     if (map!.getLayer(layerId)) {
       map!.removeLayer(layerId);
     }
   });
-
   if (map.getSource("features")) {
     map.removeSource("features");
   }
 
-  const geojson = convertToGeoJSON(props.features);
-
-  try {
-    map.addSource("features", {
-      type: "geojson",
-      data: geojson,
-    });
-  } catch (error) {
-    console.error("Error adding source:", error);
-    return;
-  }
+  map.addSource("features", { type: "geojson", data: geojson as any });
 
   map.addLayer({
     id: "features-fill",
     type: "fill",
     source: "features",
     filter: ["==", ["geometry-type"], "Polygon"],
-    paint: {
-      "fill-color": ["get", "color"],
-      "fill-opacity": 0.3,
-    },
+    paint: { "fill-color": props.color, "fill-opacity": 0.3 },
   });
 
   map.addLayer({
     id: "features-line",
     type: "line",
     source: "features",
-    filter: ["any",
-      ["==", ["geometry-type"], "LineString"],
-      ["==", ["geometry-type"], "Polygon"]
-    ],
-    paint: {
-      "line-color": ["get", "color"],
-      "line-width": 2,
-      "line-opacity": 0.7,
-    },
+    filter: ["any", ["==", ["geometry-type"], "LineString"], ["==", ["geometry-type"], "Polygon"]],
+    paint: { "line-color": props.color, "line-width": 2 },
   });
 
   map.addLayer({
@@ -161,60 +111,95 @@ const renderFeatures = () => {
     source: "features",
     filter: ["==", ["geometry-type"], "Point"],
     paint: {
-      "circle-radius": 8,
-      "circle-color": ["get", "color"],
-      "circle-opacity": 0.7,
-      "circle-stroke-color": "#ffffff",
+      "circle-radius": 6,
+      "circle-color": props.color,
+      "circle-stroke-color": "#fff",
       "circle-stroke-width": 2,
     },
   });
 
   // Fit bounds
-  if (props.features && props.features.length > 0) {
-    const coordinates = props.features.flatMap((feature) => {
-      const coords = feature.geometry.coordinates;
-      switch (feature.geometryType) {
-        case "Point":
-          return [coords as [number, number]];
-        case "LineString":
-          return coords as [number, number][];
-        case "Polygon":
-          return coords[0] as [number, number][];
-        case "MultiPoint":
-          return coords as [number, number][];
-        case "MultiLineString":
-          return (coords as [number, number][][]).flat();
-        case "MultiPolygon":
-          return (coords as [number, number][][][]).flat(2);
-        default:
-          return [];
-      }
-    });
+  const coords = props.features.flatMap(f => {
+    const c = f.geometry.coordinates;
+    if (f.geometryType === "Point") return [c as [number, number]];
+    if (f.geometryType === "LineString") return c as [number, number][];
+    if (f.geometryType === "Polygon") return c[0] as [number, number][];
+    return [];
+  });
 
-
-    if (coordinates.length > 0) {
-      const bounds = coordinates.reduce(
-        (bounds, coord) => bounds.extend(coord as [number, number]),
-        new maplibregl.LngLatBounds(coordinates[0], coordinates[0])
-      );
-
-      map.fitBounds(bounds, {
-        padding: 50,
-        maxZoom: 15,
-      });
-    }
+  if (coords.length > 0) {
+    const bounds = coords.reduce(
+      (b, c) => b.extend(c),
+      new maplibregl.LngLatBounds(coords[0], coords[0])
+    );
+    map.fitBounds(bounds, { padding: 50 });
   }
+
+  // Add click handlers for GeoJSON layers
+  setupGeoJSONInteractions();
 };
 
-watch(
-  () => props.features,
-  () => {
-    if (map && map.loaded()) {
-      renderFeatures();
+const setupGeoJSONInteractions = () => {
+  if (!map) {
+    console.warn('[MapViewer] No map instance for interactions');
+    return;
+  }
+
+  const layerIds = ["features-fill", "features-line", "features-point"];
+  const currentMap = map; // Capture map reference
+
+  layerIds.forEach((layerId) => {
+    // Check if layer exists
+    const layer = currentMap.getLayer(layerId);
+    if (!layer) {
+      console.warn(`[MapViewer] Layer ${layerId} not found in style`);
+      return;
     }
-  },
-  { deep: true }
-);
+
+    // Cursor on hover
+    currentMap.on("mouseenter", layerId, () => {
+      currentMap.getCanvas().style.cursor = "pointer";
+    });
+
+    currentMap.on("mouseleave", layerId, () => {
+      currentMap.getCanvas().style.cursor = "";
+    });
+
+    // Click to show popup
+    currentMap.on("click", layerId, (e) => {
+      if (!e.features || e.features.length === 0) return;
+
+      const feature = e.features[0];
+      const props = feature.properties || {};
+
+      let content = `
+        <div style="font-family: sans-serif; padding: 12px;">
+          <div style="font-weight: bold; font-size: 14px; margin-bottom: 8px; color: #1f2937;">
+            ${feature.geometry?.type || "Feature"}
+          </div>
+      `;
+
+      // Add custom properties
+      const propEntries = Object.entries(props).filter(([key]) => !["color", "featureId"].includes(key));
+      if (propEntries.length > 0) {
+        propEntries.forEach(([key, value]) => {
+          content += `
+            <div style="font-size: 12px; margin-bottom: 4px; color: #4b5563;">
+              <strong>${key}:</strong> ${value}
+            </div>
+          `;
+        });
+      }
+
+      content += '</div>';
+
+      new maplibregl.Popup()
+        .setLngLat(e.lngLat)
+        .setHTML(content)
+        .addTo(currentMap);
+    });
+  });
+};
 
 onMounted(() => {
   initMap();
@@ -222,70 +207,24 @@ onMounted(() => {
   if (map) {
     map.on("load", () => {
       if (useMvt.value && props.branchId) {
-        // Render MVT tiles
+        // Render MVT tiles for large datasets
         addBranchMvtLayer(map!, props.branchId, {
           sourceId: `branch-${props.branchId}`,
           color: props.color,
         });
-
-        // Fit map to branch bounds
         fitBranchBounds(map!, props.branchId);
       } else if (props.features) {
-        // Render GeoJSON features
-        renderFeatures();
+        // Render GeoJSON for small feature sets
+        renderGeoJSON();
+      } else {
+        console.warn('[MapViewer] No data to render - no branchId or features');
       }
-
-      map!.on("click", (e) => {
-        const features = map!.queryRenderedFeatures(e.point, {
-          layers: ["features-fill", "features-line", "features-point"],
-        });
-
-        if (features.length > 0) {
-          const clickedFeature = features[0];
-          const featureData = props.features?.find(
-            (f) => f.id === clickedFeature.properties?.featureId
-          );
-
-          if (featureData) {
-            const properties = featureData.properties || {};
-            const popupContent = `
-              <div class="p-2">
-                <p class="font-semibold">${featureData.geometryType}</p>
-                <p class="text-sm text-gray-600">ID: ${featureData.id}</p>
-                <p class="text-sm">Operation: <span class="font-medium">${featureData.operation}</span></p>
-                ${Object.keys(properties).length > 0 ? '<hr class="my-2"/>' : ""}
-                ${Object.entries(properties)
-                  .map(
-                    ([key, value]) =>
-                      `<p class="text-sm"><span class="font-medium">${key}:</span> ${value}</p>`
-                  )
-                  .join("")}
-              </div>
-            `;
-
-            new maplibregl.Popup()
-              .setLngLat(e.lngLat)
-              .setHTML(popupContent)
-              .addTo(map!);
-
-            emit("featureClick", featureData);
-          }
-        }
-      });
-
-      map!.on("mousemove", (e) => {
-        const features = map!.queryRenderedFeatures(e.point, {
-          layers: ["features-fill", "features-line", "features-point"],
-        });
-        map!.getCanvas().style.cursor = features.length > 0 ? "pointer" : "";
-      });
     });
   }
 });
 
 onBeforeUnmount(() => {
   if (map) {
-    // Clean up MVT layers if in MVT mode
     if (useMvt.value && props.branchId) {
       removeMvtLayer(map, `branch-${props.branchId}`);
     }

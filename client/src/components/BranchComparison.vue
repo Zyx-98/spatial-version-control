@@ -44,12 +44,11 @@
     <div class="mb-6">
       <h3 class="text-lg font-semibold mb-3">Visual Comparison</h3>
       <SplitMapView
-        :leftFeatures="targetFeatures"
-        :rightFeatures="sourceFeatures"
+        :leftBranchId="targetBranchId"
+        :rightBranchId="sourceBranchId"
         :leftLabel="targetLabel"
         :rightLabel="sourceLabel"
         :height="450"
-        :highlightedFeatureId="highlightedFeatureId"
       />
     </div>
 
@@ -152,13 +151,15 @@
 
 <script setup lang="ts">
 import { ref, computed } from "vue";
-import type { BranchComparison, SpatialFeature } from "@/types";
+import type { BranchComparison } from "@/types";
 import SplitMapView from "./SplitMapView.vue";
 import FeatureDiff from "./FeatureDiff.vue";
 
 interface Props {
   summary: BranchComparison["summary"];
   changes: BranchComparison["changes"];
+  sourceBranchId: string;
+  targetBranchId: string;
   sourceLabel?: string;
   targetLabel?: string;
 }
@@ -170,41 +171,6 @@ const props = withDefaults(defineProps<Props>(), {
 
 const filterBy = ref<"all" | "added" | "modified" | "deleted">("all");
 const highlightedFeatureId = ref<string | null>(null);
-
-// Features for maps
-const sourceFeatures = computed(() => {
-  const features: SpatialFeature[] = [];
-
-  // Add new features
-  features.push(...props.changes.added);
-
-  // Add modified features (source version)
-  props.changes.modified.forEach((item) => {
-    features.push(item.source);
-  });
-
-  // Add unchanged features
-  features.push(...props.changes.unchanged);
-
-  return features;
-});
-
-const targetFeatures = computed(() => {
-  const features: SpatialFeature[] = [];
-
-  // Add deleted features
-  features.push(...props.changes.deleted);
-
-  // Add modified features (target version)
-  props.changes.modified.forEach((item) => {
-    features.push(item.target);
-  });
-
-  // Add unchanged features
-  features.push(...props.changes.unchanged);
-
-  return features;
-});
 
 // Filtered features
 const filteredAddedFeatures = computed(() => {

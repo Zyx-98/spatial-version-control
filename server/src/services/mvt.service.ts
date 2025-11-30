@@ -72,7 +72,6 @@ export class MvtService {
     x: number,
     y: number,
   ): Promise<{ main: Buffer; branch: Buffer }> {
-    // Generate tiles for both branches
     const [mainTile, branchTile] = await Promise.all([
       this.generateBranchTile(mainBranchId, z, x, y, 'main'),
       this.generateBranchTile(branchId, z, x, y, 'branch'),
@@ -185,5 +184,119 @@ export class MvtService {
     }
 
     return null;
+  }
+
+  async generateDiffTile(
+    sourceBranchId: string,
+    targetBranchId: string,
+    z: number,
+    x: number,
+    y: number,
+    layerName: string = 'diff',
+  ): Promise<Buffer> {
+    const query = `
+      WITH RECURSIVE
+      source_commits AS (
+        SELECT id, parent_commit_id, 1 as depth
+        FROM commits
+        WHERE branch_id = $1
+
+        UNION ALL
+
+        SELECT c.id, c.parent_commit_id, sc.depth + 1
+        FROM commits c
+        INNER JOIN source_commits sc ON c.id = sc.parent_commit_id
+        WHERE sc.depth < 1000
+      ),
+      target_commits AS (
+        SELECT id, parent_commit_id, 1 as depth
+        FROM commits
+        WHERE branch_id = $2
+
+        UNION ALL
+
+        SELECT c.id, c.parent_commit_id, tc.depth + 1
+        FROM commits c
+        INNER JOIN target_commits tc ON c.id = tc.parent_commit_id
+        WHERE tc.depth < 1000
+      ),
+      source_features AS (
+        SELECT
+          sf.feature_id,
+          sf.geometry_type,
+          sf.properties,
+          sf.geom,
+          ROW_NUMBER() OVER (PARTITION BY sf.feature_id ORDER BY sc.depth ASC) as rn
+        FROM spatial_features sf
+        INNER JOIN source_commits sc ON sf.commit_id = sc.id
+        WHERE sf.operation != 'delete'
+      ),
+      source_latest AS (
+        SELECT * FROM source_features WHERE rn = 1
+      ),
+      target_features AS (
+        SELECT
+          sf.feature_id,
+          sf.geometry_type,
+          sf.properties,
+          sf.geom,
+          ROW_NUMBER() OVER (PARTITION BY sf.feature_id ORDER BY tc.depth ASC) as rn
+        FROM spatial_features sf
+        INNER JOIN target_commits tc ON sf.commit_id = tc.id
+        WHERE sf.operation != 'delete'
+      ),
+      target_latest AS (
+        SELECT * FROM target_features WHERE rn = 1
+      ),
+      diff_features AS (
+        SELECT
+          COALESCE(s.feature_id, t.feature_id) as feature_id,
+          COALESCE(s.geometry_type, t.geometry_type) as geometry_type,
+          COALESCE(s.properties, t.properties) as properties,
+          COALESCE(s.geom, t.geom) as geom,
+          CASE
+            WHEN s.feature_id IS NULL THEN 'deleted'
+            WHEN t.feature_id IS NULL THEN 'added'
+            WHEN s.geom::text != t.geom::text OR s.properties::text != t.properties::text THEN 'modified'
+            ELSE 'unchanged'
+          END as change_type
+        FROM source_latest s
+        FULL OUTER JOIN target_latest t ON s.feature_id = t.feature_id
+      ),
+      mvt_features AS (
+        SELECT
+          feature_id,
+          geometry_type,
+          properties || jsonb_build_object('change_type', change_type) as properties,
+          change_type,
+          ST_AsMVTGeom(
+            ST_Transform(geom, 3857),
+            ST_TileEnvelope($3, $4, $5),
+            4096,
+            256,
+            true
+          ) AS geom
+        FROM diff_features
+        WHERE change_type != 'unchanged'
+          AND geom IS NOT NULL
+          AND ST_Intersects(
+            geom,
+            ST_Transform(ST_TileEnvelope($3, $4, $5), 4326)
+          )
+      )
+      SELECT ST_AsMVT(mvt_features, $6, 4096, 'geom') as mvt
+      FROM mvt_features;
+    `;
+
+    const result = await this.dataSource.query(query, [
+      sourceBranchId,
+      targetBranchId,
+      z,
+      x,
+      y,
+      layerName,
+    ]);
+
+    return result[0]?.mvt || Buffer.alloc(0);
   }
 }

@@ -39,8 +39,6 @@ export function useMvtLayer() {
 
       // Add vector tile source
       const tileUrl = `${API_BASE_URL}/branches/${branchId}/tiles/{z}/{x}/{y}.mvt?token=${token}`;
-      console.log('MVT tile URL template:', tileUrl);
-      console.log('Adding source with ID:', sourceId);
 
       map.addSource(sourceId, {
         type: 'vector',
@@ -105,8 +103,6 @@ export function useMvtLayer() {
         },
       });
 
-      console.log(`Added MVT layers for source: ${sourceId}`);
-
       // Add interaction handlers
       setupInteractions(map, sourceId);
     } catch (err) {
@@ -137,6 +133,12 @@ export function useMvtLayer() {
 
     // Change cursor on hover and highlight feature
     layerIds.forEach((layerId) => {
+      const layer = map.getLayer(layerId);
+      if (!layer) {
+        console.warn(`[useMvtLayer] Layer ${layerId} not found`);
+        return;
+      }
+
       map.on('mouseenter', layerId, (e) => {
         map.getCanvas().style.cursor = 'pointer';
 
@@ -186,32 +188,49 @@ export function useMvtLayer() {
             </div>
         `;
 
-        // Add properties
-        if (props.properties && typeof props.properties === 'object') {
-          const customProps = props.properties;
-          const propEntries = Object.entries(customProps).slice(0, 5); // Limit to 5 properties
+        // Add custom properties (filter out internal properties)
+        const systemProps = ['feature_id', 'geometry_type', 'operation', 'commit_id'];
+        const propEntries = Object.entries(props)
+          .filter(([key]) => !systemProps.includes(key))
+          .slice(0, 10); // Show up to 10 properties
 
-          if (propEntries.length > 0) {
-            content += '<div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid #e5e7eb;">';
-            propEntries.forEach(([key, value]) => {
+        if (propEntries.length > 0) {
+          content += '<div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid #e5e7eb;">';
+          propEntries.forEach(([key, value]) => {
+            // Handle nested properties object if it exists
+            if (key === 'properties' && typeof value === 'object' && value !== null) {
+              Object.entries(value).slice(0, 5).forEach(([nestedKey, nestedValue]) => {
+                content += `
+                  <div style="font-size: 12px; margin-bottom: 2px;">
+                    <strong style="color: #4b5563;">${nestedKey}:</strong>
+                    <span style="color: #6b7280;">${nestedValue}</span>
+                  </div>
+                `;
+              });
+            } else {
               content += `
                 <div style="font-size: 12px; margin-bottom: 2px;">
                   <strong style="color: #4b5563;">${key}:</strong>
                   <span style="color: #6b7280;">${value}</span>
                 </div>
               `;
-            });
-
-            if (Object.keys(customProps).length > 5) {
-              content += `<div style="font-size: 11px; color: #9ca3af; margin-top: 4px;">+ ${Object.keys(customProps).length - 5} more properties</div>`;
             }
-            content += '</div>';
+          });
+
+          const totalProps = Object.keys(props).filter(k => !systemProps.includes(k)).length;
+          if (totalProps > 10) {
+            content += `<div style="font-size: 11px; color: #9ca3af; margin-top: 4px;">+ ${totalProps - 10} more properties</div>`;
           }
+          content += '</div>';
         }
 
         content += '</div>';
 
-        popup.setLngLat(coordinates).setHTML(content).addTo(map);
+        try {
+          popup.setLngLat(coordinates).setHTML(content).addTo(map);
+        } catch (err) {
+          console.error('[useMvtLayer] Error creating popup:', err);
+        }
       });
     });
   };
@@ -220,22 +239,39 @@ export function useMvtLayer() {
    * Get center coordinates for a feature (for popup positioning)
    */
   const getFeatureCenter = (feature: any): [number, number] => {
-    if (!feature.geometry) return [0, 0];
+    if (!feature.geometry) {
+      console.warn('[useMvtLayer] No geometry for feature');
+      return [0, 0];
+    }
 
     const geom = feature.geometry;
 
     if (geom.type === 'Point') {
       return geom.coordinates as [number, number];
+    } else if (geom.type === 'MultiPoint') {
+      // Use first point
+      return geom.coordinates[0] as [number, number];
     } else if (geom.type === 'LineString') {
       const coords = geom.coordinates;
+      const midIndex = Math.floor(coords.length / 2);
+      return coords[midIndex] as [number, number];
+    } else if (geom.type === 'MultiLineString') {
+      // Use midpoint of first line
+      const coords = geom.coordinates[0];
       const midIndex = Math.floor(coords.length / 2);
       return coords[midIndex] as [number, number];
     } else if (geom.type === 'Polygon') {
       const coords = geom.coordinates[0]; // Outer ring
       const midIndex = Math.floor(coords.length / 2);
       return coords[midIndex] as [number, number];
+    } else if (geom.type === 'MultiPolygon') {
+      // Use midpoint of first polygon's outer ring
+      const coords = geom.coordinates[0][0]; // First polygon, outer ring
+      const midIndex = Math.floor(coords.length / 2);
+      return coords[midIndex] as [number, number];
     }
 
+    console.warn('[useMvtLayer] Unknown geometry type:', geom.type);
     return [0, 0];
   };
 
@@ -259,8 +295,6 @@ export function useMvtLayer() {
       if (map.getSource(sourceId)) {
         map.removeSource(sourceId);
       }
-
-      console.log(`Removed MVT layer: ${sourceId}`);
     } catch (err) {
       console.error('Error removing MVT layer:', err);
     }
@@ -337,10 +371,225 @@ export function useMvtLayer() {
     }
   };
 
+  const addDiffMvtLayer = (
+    map: maplibregl.Map,
+    sourceBranchId: string,
+    targetBranchId: string,
+    options: { sourceId: string; layerName?: string }
+  ) => {
+    const { sourceId, layerName = 'diff' } = options;
+
+    if (!map || !map.loaded()) {
+      console.warn('Map not loaded yet');
+      return;
+    }
+
+    try {
+      const token = localStorage.getItem('token');
+
+      const tileUrl = `${API_BASE_URL}/branches/${sourceBranchId}/diff/${targetBranchId}/tiles/{z}/{x}/{y}.mvt?token=${token}`;
+
+      map.addSource(sourceId, {
+        type: 'vector',
+        tiles: [tileUrl],
+        minzoom: 0,
+        maxzoom: 22,
+      });
+
+      const colorExpression = [
+        'match',
+        ['get', 'change_type'],
+        'added', '#10b981',    // Green for added
+        'modified', '#3b82f6', // Blue for modified
+        'deleted', '#ef4444',  // Red for deleted
+        '#6b7280'              // Gray fallback
+      ];
+
+      map.addLayer({
+        id: `${sourceId}-fill`,
+        type: 'fill',
+        source: sourceId,
+        'source-layer': layerName,
+        filter: ['==', ['geometry-type'], 'Polygon'],
+        paint: {
+          'fill-color': colorExpression as any,
+          'fill-opacity': 0.4,
+        },
+      });
+
+      map.addLayer({
+        id: `${sourceId}-line`,
+        type: 'line',
+        source: sourceId,
+        'source-layer': layerName,
+        filter: ['any',
+          ['==', ['geometry-type'], 'LineString'],
+          ['==', ['geometry-type'], 'Polygon']
+        ],
+        paint: {
+          'line-color': colorExpression as any,
+          'line-width': [
+            'match',
+            ['get', 'change_type'],
+            'deleted', 3,   // Thicker for deleted
+            2               // Normal for others
+          ],
+          'line-opacity': [
+            'match',
+            ['get', 'change_type'],
+            'deleted', 0.6, // More transparent for deleted
+            0.8             // Normal opacity
+          ],
+          'line-dasharray': [
+            'match',
+            ['get', 'change_type'],
+            'deleted', [2, 2], // Dashed for deleted
+            [1]                // Solid for others
+          ] as any,
+        },
+      });
+
+      map.addLayer({
+        id: `${sourceId}-point`,
+        type: 'circle',
+        source: sourceId,
+        'source-layer': layerName,
+        filter: ['==', ['geometry-type'], 'Point'],
+        paint: {
+          'circle-radius': 7,
+          'circle-color': colorExpression as any,
+          'circle-opacity': 0.8,
+          'circle-stroke-color': '#ffffff',
+          'circle-stroke-width': 2,
+        },
+      });
+
+      // Add interaction handlers with diff-specific popup
+      setupDiffInteractions(map, sourceId);
+    } catch (err) {
+      console.error('Error adding diff MVT layer:', err);
+      error.value = err instanceof Error ? err.message : 'Unknown error';
+    }
+  };
+
+  /**
+   * Setup interactions for diff MVT layers
+   */
+  const setupDiffInteractions = (
+    map: maplibregl.Map,
+    sourceId: string
+  ) => {
+    const layerIds = [
+      `${sourceId}-fill`,
+      `${sourceId}-line`,
+      `${sourceId}-point`,
+    ];
+
+    const popup = new maplibregl.Popup({
+      closeButton: true,
+      closeOnClick: false,
+      maxWidth: '400px',
+    });
+
+    layerIds.forEach((layerId) => {
+      map.on('mouseenter', layerId, () => {
+        map.getCanvas().style.cursor = 'pointer';
+      });
+
+      map.on('mouseleave', layerId, () => {
+        map.getCanvas().style.cursor = '';
+      });
+
+      map.on('click', layerId, (e) => {
+        if (!e.features || e.features.length === 0) return;
+
+        const feature = e.features[0];
+        const coordinates = getFeatureCenter(feature);
+        const props = feature.properties || {};
+
+        // Get change type and color
+        const changeType = props.change_type || 'unknown';
+        const changeLabels: Record<string, string> = {
+          added: 'Added',
+          modified: 'Modified',
+          deleted: 'Deleted',
+        };
+        const changeColors: Record<string, string> = {
+          added: '#10b981',
+          modified: '#3b82f6',
+          deleted: '#ef4444',
+        };
+
+        const label = changeLabels[changeType] || 'Unknown';
+        const color = changeColors[changeType] || '#6b7280';
+
+        let content = `
+          <div style="font-family: sans-serif; padding: 8px;">
+            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
+              <div style="width: 12px; height: 12px; border-radius: 50%; background-color: ${color};"></div>
+              <div style="font-weight: bold; font-size: 14px; color: #1f2937;">${label}</div>
+            </div>
+            <div style="font-size: 12px; color: #6b7280; margin-bottom: 4px;">
+              <strong>Feature ID:</strong> ${props.feature_id || 'N/A'}
+            </div>
+            <div style="font-size: 12px; color: #6b7280; margin-bottom: 4px;">
+              <strong>Type:</strong> ${props.geometry_type || 'Unknown'}
+            </div>
+        `;
+
+        // Add custom properties (filter out internal properties)
+        const systemProps = ['change_type', 'feature_id', 'geometry_type', 'operation', 'commit_id'];
+        const propEntries = Object.entries(props)
+          .filter(([key]) => !systemProps.includes(key))
+          .slice(0, 10); // Show up to 10 properties
+
+        if (propEntries.length > 0) {
+          content += '<div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid #e5e7eb;">';
+          propEntries.forEach(([key, value]) => {
+            // Handle nested properties object if it exists
+            if (key === 'properties' && typeof value === 'object' && value !== null) {
+              try {
+                const customProps = typeof value === 'string' ? JSON.parse(value) : value;
+                Object.entries(customProps).slice(0, 5).forEach(([nestedKey, nestedValue]) => {
+                  content += `
+                    <div style="font-size: 12px; margin-bottom: 2px;">
+                      <strong style="color: #4b5563;">${nestedKey}:</strong>
+                      <span style="color: #6b7280;">${nestedValue}</span>
+                    </div>
+                  `;
+                });
+              } catch (e) {
+                console.error('Error parsing nested properties:', e);
+              }
+            } else {
+              content += `
+                <div style="font-size: 12px; margin-bottom: 2px;">
+                  <strong style="color: #4b5563;">${key}:</strong>
+                  <span style="color: #6b7280;">${value}</span>
+                </div>
+              `;
+            }
+          });
+
+          const totalProps = Object.keys(props).filter(k => !systemProps.includes(k)).length;
+          if (totalProps > 10) {
+            content += `<div style="font-size: 11px; color: #9ca3af; margin-top: 4px;">+ ${totalProps - 10} more properties</div>`;
+          }
+          content += '</div>';
+        }
+
+        content += '</div>';
+
+        popup.setLngLat(coordinates).setHTML(content).addTo(map);
+      });
+    });
+  };
+
   return {
     loading,
     error,
     addBranchMvtLayer,
+    addDiffMvtLayer,
     removeMvtLayer,
     fitBranchBounds,
     updateLayerColor,

@@ -20,6 +20,7 @@ import { MergeRequestService } from './services/merge-request.service';
 import { GeoJsonService } from './services/geojson.service';
 import { ShapefileService } from './services/shapefile.service';
 import { MvtService } from './services/mvt.service';
+import { DiffService } from './services/diff.service';
 import { AuthController } from './controllers/auth.controller';
 import { DatasetController } from './controllers/dataset.controller';
 import { BranchController } from './controllers/branch.controller';
@@ -94,6 +95,7 @@ import { JwtAuthGuard } from './guards/jwt-auth.guard';
     GeoJsonService,
     ShapefileService,
     MvtService,
+    DiffService,
     JwtStrategy,
     JwtAuthGuard,
   ],
