@@ -266,3 +266,18 @@ export interface GeoJSONFeatureCollection {
   type: "FeatureCollection";
   features: GeoJSONFeature[];
 }
+
+// Diff API Types
+export interface DiffSummary {
+  added: number;
+  modified: number;
+  deleted: number;
+  totalChanges: number;
+  affectedArea: {
+    minLng: number;
+    minLat: number;
+    maxLng: number;
+    maxLat: number;
+  } | null;
+}
+

@@ -67,6 +67,11 @@ Designed for **high scalability**, the system uses:
 - **Role-Based Access Control**: Admin and Normal User roles with granular permissions
 - **Spatial Data Management**: Full support for standard GeoJSON geometry types (Point, LineString, Polygon, MultiPoint, MultiLineString, MultiPolygon)
 - **File Format Support**: Import and export GeoJSON and Shapefile formats with GDAL integration
+- **High-Performance Rendering**:
+  - Mapbox Vector Tiles (MVT) for efficient rendering of large datasets
+  - Automatic tile generation with PostGIS ST_AsMVT
+  - Client-side caching for improved performance
+  - Seamless fallback to GeoJSON for small feature sets
 - **Git-Like Version Control**:
   - Create branches from main branch
   - Commit changes with detailed tracking
@@ -88,6 +93,8 @@ Designed for **high scalability**, the system uses:
 - **Property Management**: Add and edit custom properties for each feature
 - **Real-time Visualization**: See changes immediately on the map
 - **Visual Change Tracking**: Color-coded indicators for added, modified, and deleted features
+- **Interactive Popups**: Click on features to view detailed properties and metadata
+- **Vector Tile Rendering**: Smooth pan and zoom with hardware-accelerated rendering
 
 ### Access Control
 - **Role-Based Permissions**: Admin and User roles with different capabilities
@@ -102,10 +109,12 @@ Designed for **high scalability**, the system uses:
 - **Conflict Detection**: Automatic detection of geometry and property conflicts
 - **Git-like Visual Diff**:
   - Side-by-side map comparison with synchronized navigation
+  - Vector tile rendering for smooth performance with large datasets
   - Property-level diff with git-style `---/+++` format
   - Coordinate-level geometry diff with line numbers
   - Diff statistics (additions, deletions)
   - Color-coded changes (red for removed, green for added)
+  - Interactive popups showing feature metadata on click
 - **Branch-Level Conflict Resolution**:
   - Resolve conflicts directly from branch view via "Fetch Main"
   - Resolution commits track all conflict decisions
@@ -334,6 +343,8 @@ GET /api/branches/:id - Get branch details
 GET /api/branches/:id/with-permissions - Get branch with permission flags
 DELETE /api/branches/:id - Delete branch (Creator or Admin)
 POST /api/branches/:id/fetch-main - Fetch main branch updates and check conflicts
+GET /api/branches/:id/mvt/:z/:x/:y - Get vector tiles for branch (MVT format)
+GET /api/branches/:id/bounds - Get geographic bounds of branch features
 ```
 
 ### Commits
@@ -342,7 +353,9 @@ POST /api/commits - Create commit with features
 GET /api/commits/branch/:branchId - Get all commits for a branch
 GET /api/commits/:id - Get commit details
 GET /api/commits/:id/changes - Get commit changes with visual diff
+GET /api/commits/:id/mvt/:z/:x/:y - Get vector tiles for commit changes (MVT format)
 POST /api/commits/compare - Compare two branches
+GET /api/commits/compare/:sourceBranchId/:targetBranchId/mvt/:z/:x/:y - Get diff tiles (MVT)
 ```
 
 ### Features
@@ -387,6 +400,7 @@ Error responses:
 - **Framework**: NestJS (Node.js) - Modular architecture for scalability
 - **Database**: PostgreSQL 14+ with PostGIS 3.0+ extension
 - **ORM**: TypeORM - Optimized queries with spatial indexing
+- **Vector Tiles**: PostGIS ST_AsMVT for efficient tile generation
 - **Authentication**: JWT (JSON Web Tokens) with bcrypt
 - **Validation**: class-validator, class-transformer
 - **API Documentation**: Swagger/OpenAPI (auto-generated)
@@ -396,7 +410,7 @@ Error responses:
 - **State Management**: Pinia stores
 - **Routing**: Vue Router 4
 - **HTTP Client**: Axios with interceptors
-- **Map Library**: Leaflet 1.9+ with Leaflet.draw
+- **Map Library**: MapLibre GL JS with vector tile support (MVT)
 - **Styling**: Tailwind CSS 3
 - **Build Tool**: Vite 4 - Fast HMR and builds
 - **Date Handling**: date-fns
@@ -478,11 +492,13 @@ Error responses:
   - [ ] Time-travel feature (view data at specific commit)
   - [ ] Comprehensive audit log
 
-- [ ] **Performance Optimization**
-  - [ ] Pagination for large datasets
+- [x] **Performance Optimization**
+  - [x] Vector tiles (MVT) for efficient rendering of large datasets
+  - [x] PostGIS ST_AsMVT for server-side tile generation
+  - [x] Client-side composable for MVT layer management
+  - [ ] Pagination for large feature lists
   - [ ] Virtual scrolling for feature lists
   - [ ] Database query caching
-  - [ ] Lazy loading for map features
   - [ ] WebSocket for real-time updates
 
 - [ ] **Testing**
@@ -516,9 +532,8 @@ This project is licensed with the [MIT license](LICENSE).
 
 ## Acknowledgments
 
-- [Leaflet](https://leafletjs.com/) - Interactive maps
-- [Leaflet.draw](https://github.com/Leaflet/Leaflet.draw) - Drawing tools
-- [PostGIS](https://postgis.net/) - Spatial database extension
+- [MapLibre GL JS](https://maplibre.org/) - Open-source map rendering with vector tiles
+- [PostGIS](https://postgis.net/) - Spatial database extension with MVT support
 - [NestJS](https://nestjs.com/) - Progressive Node.js framework
 - [Vue.js](https://vuejs.org/) - Progressive JavaScript framework
 - [Tailwind CSS](https://tailwindcss.com/) - Utility-first CSS framework
