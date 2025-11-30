@@ -173,19 +173,16 @@
       <div class="bg-white rounded-lg shadow mb-6">
         <div class="px-6 py-4 border-b border-gray-200 flex justify-between items-center">
           <h2 class="text-xl font-semibold text-gray-900">Spatial Features</h2>
-          <span v-if="features.length > 100" class="text-sm px-3 py-1 bg-green-100 text-green-800 rounded-full">
+          <span class="text-sm px-3 py-1 bg-green-100 text-green-800 rounded-full">
             🚀 Using Vector Tiles
           </span>
         </div>
         <div class="p-4">
-          <!-- MapViewer auto-detects: MVT for branchId, GeoJSON for features array -->
           <MapViewer
-            v-if="features.length > 100"
             :branchId="branchId"
             color="#3b82f6"
             :height="500"
           />
-          <MapViewer v-else :features="features" :height="500" />
         </div>
       </div>
 
@@ -603,7 +600,6 @@ const resolvingConflicts = ref(false);
 
 const branch = computed(() => spatialStore.currentBranch);
 const commits = computed(() => spatialStore.commits);
-const features = computed(() => spatialStore.features);
 const conflicts = computed(() => spatialStore.conflicts);
 const canEdit = computed(() => spatialStore.branchCanEdit);
 const hasOpenMergeRequest = computed(
@@ -768,7 +764,6 @@ const handleResolveBranchConflicts = async () => {
     conflictResolutions.value = [];
 
     await spatialStore.fetchBranchWithPermissions(branchId);
-    await spatialStore.fetchLatestFeatures(branchId);
   } catch (error: any) {
     console.error("Failed to resolve conflicts:", error);
     alert(error.response?.data?.message || "Failed to resolve conflicts");
@@ -782,7 +777,6 @@ onMounted(async () => {
   try {
     await spatialStore.fetchBranchWithPermissions(branchId);
     await spatialStore.fetchCommits(branchId);
-    await spatialStore.fetchLatestFeatures(branchId);
     await spatialStore.fetchBranches(datasetId);
   } catch (error) {
     console.error("Failed to load branch:", error);

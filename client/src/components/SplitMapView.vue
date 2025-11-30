@@ -16,42 +16,29 @@
       </div>
     </div>
 
-    <div class="mt-2 flex justify-center space-x-4">
+    <div class="mt-2 flex justify-center">
       <label class="flex items-center space-x-2 text-sm text-gray-600">
         <input type="checkbox" v-model="syncMaps" class="rounded" />
         <span>Sync map movement</span>
       </label>
-      <button
-        @click="fitBounds"
-        class="px-3 py-1 text-sm bg-gray-100 hover:bg-gray-200 rounded"
-      >
-        Fit to features
-      </button>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onBeforeUnmount, watch, computed } from "vue";
+import { ref, onMounted, onBeforeUnmount } from "vue";
 import maplibregl from "maplibre-gl";
-import { SpatialFeatureType, type SpatialFeature } from "@/types";
 import { useMvtLayer } from "@/composables/useMvtLayer";
 import "maplibre-gl/dist/maplibre-gl.css";
 
 interface Props {
-  // GeoJSON mode
-  leftFeatures?: SpatialFeature[];
-  rightFeatures?: SpatialFeature[];
-  // MVT mode
-  leftBranchId?: string;
-  rightBranchId?: string;
-  // Common props
+  leftBranchId: string;
+  rightBranchId: string;
   leftLabel?: string;
   rightLabel?: string;
   leftColor?: string;
   rightColor?: string;
   height?: number;
-  highlightedFeatureId?: string | null;
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -60,7 +47,6 @@ const props = withDefaults(defineProps<Props>(), {
   leftColor: "#ef4444",
   rightColor: "#10b981",
   height: 400,
-  highlightedFeatureId: null,
 });
 
 const leftMapId = ref(`left-map-${Math.random().toString(36).substring(2, 11)}`);
@@ -74,9 +60,6 @@ const syncMaps = ref(true);
 
 // MVT composable
 const { addBranchMvtLayer, removeMvtLayer, fitBranchBounds } = useMvtLayer();
-
-// Determine rendering mode
-const useMvt = computed(() => !!(props.leftBranchId || props.rightBranchId));
 
 const initMaps = () => {
   // Initialize left map
@@ -155,229 +138,32 @@ const initMaps = () => {
   });
 };
 
-const convertToGeoJSON = (features: SpatialFeature[], color: string) => {
-  return {
-    type: "FeatureCollection",
-    features: features.map((feature) => {
-      const isHighlighted = feature.id === props.highlightedFeatureId;
-      return {
-        type: "Feature",
-        id: feature.id,
-        geometry: {
-          type: feature.geometryType,
-          coordinates: feature.geometry.coordinates,
-        },
-        properties: {
-          ...feature.properties,
-          color,
-          isHighlighted,
-          featureId: feature.id,
-          geometryType: feature.geometryType,
-        },
-      };
-    }),
-  };
-};
-
-const renderFeaturesOnMap = (
-  map: maplibregl.Map,
-  features: SpatialFeature[],
-  color: string,
-  sourcePrefix: string
-) => {
-  if (!map || !map.loaded()) return;
-
-  // Remove existing layers and sources
-  [`${sourcePrefix}-fill`, `${sourcePrefix}-line`, `${sourcePrefix}-point`].forEach(
-    (layerId) => {
-      if (map.getLayer(layerId)) {
-        map.removeLayer(layerId);
-      }
-    }
-  );
-
-  if (map.getSource(sourcePrefix)) {
-    map.removeSource(sourcePrefix);
-  }
-
-  if (features.length === 0) return;
-
-  // Add GeoJSON source
-  const geojson = convertToGeoJSON(features, color);
-  map.addSource(sourcePrefix, {
-    type: "geojson",
-    data: geojson as any,
-  });
-
-  // Add fill layer for polygons
-  map.addLayer({
-    id: `${sourcePrefix}-fill`,
-    type: "fill",
-    source: sourcePrefix,
-    filter: ["in", ["geometry-type"], ["literal", ["Polygon", "MultiPolygon"]]],
-    paint: {
-      "fill-color": ["get", "color"],
-      "fill-opacity": 0.35,
-    },
-  });
-
-  // Add line layer
-  map.addLayer({
-    id: `${sourcePrefix}-line`,
-    type: "line",
-    source: sourcePrefix,
-    filter: [
-      "in",
-      ["geometry-type"],
-      ["literal", ["LineString", "MultiLineString", "Polygon", "MultiPolygon"]],
-    ],
-    paint: {
-      "line-color": [
-        "case",
-        ["get", "isHighlighted"],
-        "#000000",
-        ["get", "color"],
-      ],
-      "line-width": [
-        "case",
-        ["get", "isHighlighted"],
-        5,
-        3,
-      ],
-      "line-opacity": [
-        "case",
-        ["get", "isHighlighted"],
-        1,
-        0.7,
-      ],
-    },
-  });
-
-  // Add circle layer for points
-  map.addLayer({
-    id: `${sourcePrefix}-point`,
-    type: "circle",
-    source: sourcePrefix,
-    filter: ["in", ["geometry-type"], ["literal", ["Point", "MultiPoint"]]],
-    paint: {
-      "circle-radius": [
-        "case",
-        ["get", "isHighlighted"],
-        12,
-        8,
-      ],
-      "circle-color": ["get", "color"],
-      "circle-opacity": [
-        "case",
-        ["get", "isHighlighted"],
-        1,
-        0.7,
-      ],
-      "circle-stroke-color": [
-        "case",
-        ["get", "isHighlighted"],
-        "#000000",
-        "#ffffff",
-      ],
-      "circle-stroke-width": [
-        "case",
-        ["get", "isHighlighted"],
-        5,
-        3,
-      ],
-    },
-  });
-};
 
 const renderFeatures = () => {
   if (!leftMap || !rightMap || !leftMap.loaded() || !rightMap.loaded()) return;
 
-  if (useMvt.value) {
-    // MVT mode - render tiles
-    if (props.leftBranchId) {
-      addBranchMvtLayer(leftMap, props.leftBranchId, {
-        sourceId: `left-branch-${props.leftBranchId}`,
-        color: props.leftColor,
-      });
-    }
+  // Render MVT tiles for both branches
+  addBranchMvtLayer(leftMap, props.leftBranchId, {
+    sourceId: `left-branch-${props.leftBranchId}`,
+    color: props.leftColor,
+  });
 
-    if (props.rightBranchId) {
-      addBranchMvtLayer(rightMap, props.rightBranchId, {
-        sourceId: `right-branch-${props.rightBranchId}`,
-        color: props.rightColor,
-      });
-    }
+  addBranchMvtLayer(rightMap, props.rightBranchId, {
+    sourceId: `right-branch-${props.rightBranchId}`,
+    color: props.rightColor,
+  });
 
-    // Fit bounds to first branch that has data
-    if (props.leftBranchId) {
-      fitBranchBounds(leftMap, props.leftBranchId).then(() => {
-        if (props.rightBranchId && rightMap) {
-          isSyncing = true;
-          rightMap.setCenter(leftMap!.getCenter());
-          rightMap.setZoom(leftMap!.getZoom());
-          isSyncing = false;
-        }
-      });
-    } else if (props.rightBranchId) {
-      fitBranchBounds(rightMap, props.rightBranchId);
+  // Fit bounds to left branch and sync right map
+  fitBranchBounds(leftMap, props.leftBranchId).then(() => {
+    if (rightMap) {
+      isSyncing = true;
+      rightMap.setCenter(leftMap!.getCenter());
+      rightMap.setZoom(leftMap!.getZoom());
+      isSyncing = false;
     }
-  } else if (props.leftFeatures && props.rightFeatures) {
-    // GeoJSON mode - render features
-    renderFeaturesOnMap(leftMap, props.leftFeatures, props.leftColor, "left-features");
-    renderFeaturesOnMap(rightMap, props.rightFeatures, props.rightColor, "right-features");
-    fitBounds();
-  }
+  });
 };
 
-const fitBounds = () => {
-  if (!props.leftFeatures && !props.rightFeatures) return;
-
-  const allCoordinates: [number, number][] = [];
-
-  const collectCoordinates = (features: SpatialFeature[]) => {
-    features.forEach((feature) => {
-      if (!feature.geometry?.coordinates) return;
-      const coords = feature.geometry.coordinates;
-
-      switch (feature.geometryType) {
-        case SpatialFeatureType.POINT:
-          allCoordinates.push([coords[0], coords[1]]);
-          break;
-        case SpatialFeatureType.LINE:
-          allCoordinates.push(...(coords as [number, number][]));
-          break;
-        case SpatialFeatureType.POLYGON:
-          allCoordinates.push(...(coords[0] as [number, number][]));
-          break;
-      }
-    });
-  };
-
-  if (props.leftFeatures) collectCoordinates(props.leftFeatures);
-  if (props.rightFeatures) collectCoordinates(props.rightFeatures);
-
-  if (allCoordinates.length > 0 && leftMap && rightMap) {
-    const bounds = allCoordinates.reduce(
-      (bounds, coord) => bounds.extend(coord),
-      new maplibregl.LngLatBounds(allCoordinates[0], allCoordinates[0])
-    );
-
-    isSyncing = true;
-    leftMap.fitBounds(bounds, { padding: 20 });
-    rightMap.fitBounds(bounds, { padding: 20 });
-    isSyncing = false;
-  }
-};
-
-watch(
-  () => [props.leftFeatures, props.rightFeatures, props.highlightedFeatureId],
-  () => {
-    if (leftMap && rightMap && leftMap.loaded() && rightMap.loaded()) {
-      renderFeatures();
-    }
-  },
-  { deep: true }
-);
 
 onMounted(() => {
   initMaps();
@@ -402,21 +188,14 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
-  // Clean up MVT layers if in MVT mode
-  if (useMvt.value) {
-    if (leftMap && props.leftBranchId) {
-      removeMvtLayer(leftMap, `left-branch-${props.leftBranchId}`);
-    }
-    if (rightMap && props.rightBranchId) {
-      removeMvtLayer(rightMap, `right-branch-${props.rightBranchId}`);
-    }
-  }
-
+  // Clean up MVT layers
   if (leftMap) {
+    removeMvtLayer(leftMap, `left-branch-${props.leftBranchId}`);
     leftMap.remove();
     leftMap = null;
   }
   if (rightMap) {
+    removeMvtLayer(rightMap, `right-branch-${props.rightBranchId}`);
     rightMap.remove();
     rightMap = null;
   }

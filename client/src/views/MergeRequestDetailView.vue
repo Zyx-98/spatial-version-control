@@ -153,6 +153,8 @@
           v-else-if="branchComparison && mergeRequest"
           :summary="branchComparison.summary"
           :changes="branchComparison.changes"
+          :sourceBranchId="mergeRequest.sourceBranch?.id || ''"
+          :targetBranchId="mergeRequest.targetBranch?.id || ''"
           :sourceLabel="mergeRequest.sourceBranch?.name || 'Source'"
           :targetLabel="mergeRequest.targetBranch?.name || 'Target'"
         />
