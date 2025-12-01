@@ -221,44 +221,56 @@ export class CommitService {
   async getCommitChanges(commitId: string) {
     const commit = await this.findOne(commitId);
 
-    // Get all commits in the branch before this commit (in reverse chronological order)
-    const allCommits = await this.commitRepository.find({
-      where: { branchId: commit.branchId },
-      relations: { features: true },
-      order: { createdAt: 'DESC' },
-    });
+    const updateFeatureIds = commit.features
+      .filter((f) => f.operation === FeatureOperation.UPDATE)
+      .map((f) => f.featureId);
 
-    const currentCommitIndex = allCommits.findIndex((c) => c.id === commitId);
+    let previousStates: any[] = [];
 
-    const previousCommits =
-      currentCommitIndex >= 0 ? allCommits.slice(currentCommitIndex + 1) : [];
+    if (updateFeatureIds.length > 0) {
+      const rawResults = await this.dataSource.query(
+        `
+        SELECT DISTINCT ON (sf.feature_id)
+          sf.id, sf.feature_id, sf.geometry_type, sf.geometry,
+          sf.properties, sf.operation, sf.commit_id, sf.created_at
+        FROM spatial_features sf
+        INNER JOIN commits c ON sf.commit_id = c.id
+        WHERE c.branch_id = $1
+          AND sf.feature_id = ANY($2)
+          AND c.created_at < $3
+          AND sf.operation != $4
+        ORDER BY sf.feature_id, c.created_at DESC
+        `,
+        [
+          commit.branchId,
+          updateFeatureIds,
+          commit.createdAt,
+          FeatureOperation.DELETE,
+        ],
+      );
 
-    const findPreviousFeatureState = (
-      featureId: string,
-    ): SpatialFeature | null => {
-      for (const prevCommit of previousCommits) {
-        const feature = prevCommit.features.find(
-          (f) => f.featureId === featureId,
-        );
-        if (feature) {
-          if (feature.operation === FeatureOperation.DELETE) {
-            continue;
-          }
-          return feature;
-        }
-      }
-      return null;
-    };
+      previousStates = rawResults.map((row: any) => ({
+        id: row.id,
+        featureId: row.feature_id,
+        geometryType: row.geometry_type,
+        geometry: row.geometry,
+        properties: row.properties,
+        operation: row.operation,
+        commitId: row.commit_id,
+        createdAt: row.created_at,
+      }));
+    }
+
+    const previousStateMap = new Map(
+      previousStates.map((f) => [f.featureId, f]),
+    );
 
     const updatedFeatures = commit.features
       .filter((f) => f.operation === FeatureOperation.UPDATE)
-      .map((updatedFeature) => {
-        const beforeState = findPreviousFeatureState(updatedFeature.featureId);
-        return {
-          after: updatedFeature,
-          before: beforeState,
-        };
-      });
+      .map((updatedFeature) => ({
+        after: updatedFeature,
+        before: previousStateMap.get(updatedFeature.featureId) || null,
+      }));
 
     const changes = {
       created: commit.features.filter(
