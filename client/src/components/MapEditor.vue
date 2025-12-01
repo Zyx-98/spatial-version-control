@@ -52,12 +52,14 @@
 <script setup lang="ts">
 import { ref, onMounted, watch, onBeforeUnmount, computed } from "vue";
 import maplibregl from "maplibre-gl";
+import { useMvtLayer } from "@/composables/useMvtLayer";
 import "maplibre-gl/dist/maplibre-gl.css";
 
 interface Props {
   height?: number;
   tool?: "point" | "line" | "polygon" | "select" | "edit";
   features?: any[];
+  branchId?: string; // New: Use MVT for context when provided
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -82,11 +84,45 @@ let editingFeature = ref<any | null>(null);
 let editMarkers: maplibregl.Marker[] = [];
 let tempMarkers: maplibregl.Marker[] = [];
 let currentPopup: maplibregl.Popup | null = null;
+let initialBoundsFitted = ref(false); // Track if we've done initial zoom
+
+// MVT composable for displaying context features
+const { addBranchMvtLayer, removeMvtLayer, fitBranchBounds } = useMvtLayer();
+const mvtSourceId = computed(() => props.branchId ? `editor-context-${props.branchId}` : null);
+
+// Track feature IDs that are being edited/modified to hide from MVT layer
+const editedFeatureIds = ref<Set<string>>(new Set());
 
 const mapCursor = computed(() => {
   if (props.tool === "select" || props.tool === "edit") return "default";
   return "crosshair";
 });
+
+/**
+ * Update MVT layer filter to hide edited features
+ */
+const updateMvtFilter = () => {
+  if (!map || !mvtSourceId.value) return;
+
+  const layerIds = [
+    `${mvtSourceId.value}-fill`,
+    `${mvtSourceId.value}-line`,
+    `${mvtSourceId.value}-point`,
+  ];
+
+  // Create filter to exclude edited feature IDs
+  let filter: any = null;
+  if (editedFeatureIds.value.size > 0) {
+    const featureIdArray = Array.from(editedFeatureIds.value);
+    filter = ['!', ['in', ['get', 'feature_id'], ['literal', featureIdArray]]];
+  }
+
+  layerIds.forEach((layerId) => {
+    if (map!.getLayer(layerId)) {
+      map!.setFilter(layerId, filter);
+    }
+  });
+};
 
 const initMap = () => {
   map = new maplibregl.Map({
@@ -556,7 +592,8 @@ const cancelGeometryEdit = () => {
   editingFeature.value = null;
   selectedFeatureIndex = null;
   emit("toolChange", "select");
-  renderPermanentFeatures();
+  // Don't call renderPermanentFeatures() here - the watcher will handle it
+  // when the tool prop updates to 'select'
 };
 
 const getFeatureColor = (feature: any, isSelected: boolean) => {
@@ -588,7 +625,19 @@ const renderPermanentFeatures = () => {
     map.removeSource("features");
   }
 
-  if (props.tool === "edit" || props.features.length === 0) return;
+  // Update MVT filter to hide edited features
+  editedFeatureIds.value.clear();
+  props.features.forEach((feature) => {
+    if (feature.id) {
+      editedFeatureIds.value.add(feature.id);
+    }
+  });
+  updateMvtFilter();
+
+  // Don't render GeoJSON overlay in edit mode, but MVT filter is still active
+  if (props.tool === "edit") return;
+
+  if (props.features.length === 0) return;
 
   // Convert features to GeoJSON
   const geojson = {
@@ -703,8 +752,8 @@ const renderPermanentFeatures = () => {
     });
   }
 
-  // Auto-fit bounds
-  if (props.features.length > 0) {
+  // Auto-fit bounds only on initial load (not after every edit!)
+  if (!initialBoundsFitted.value && props.features.length > 0) {
     const visibleFeatures = props.features.filter(
       (f) => f.operation !== "delete"
     );
@@ -735,6 +784,7 @@ const renderPermanentFeatures = () => {
           padding: 50,
           maxZoom: 15,
         });
+        initialBoundsFitted.value = true;
       }
     }
   }
@@ -786,6 +836,23 @@ watch(
 onMounted(() => {
   initMap();
   map!.on("load", () => {
+    // If branchId is provided, use MVT for context (read-only features)
+    if (props.branchId && mvtSourceId.value) {
+      addBranchMvtLayer(map!, props.branchId, {
+        sourceId: mvtSourceId.value,
+        color: '#6b7280', // Gray for context
+        layerName: 'features',
+      });
+
+      // Fit to MVT bounds on initial load
+      if (!initialBoundsFitted.value) {
+        fitBranchBounds(map!, props.branchId).then(() => {
+          initialBoundsFitted.value = true;
+        });
+      }
+    }
+
+    // Render editable features overlay (from props.features)
     renderPermanentFeatures();
   });
 });
@@ -802,6 +869,11 @@ onBeforeUnmount(() => {
 
   if (currentPopup) {
     currentPopup.remove();
+  }
+
+  // Remove MVT layers if present
+  if (map && mvtSourceId.value) {
+    removeMvtLayer(map, mvtSourceId.value);
   }
 
   if (map) {
