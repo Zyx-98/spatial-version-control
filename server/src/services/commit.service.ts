@@ -221,13 +221,50 @@ export class CommitService {
   async getCommitChanges(commitId: string) {
     const commit = await this.findOne(commitId);
 
+    // Get all commits in the branch before this commit (in reverse chronological order)
+    const allCommits = await this.commitRepository.find({
+      where: { branchId: commit.branchId },
+      relations: { features: true },
+      order: { createdAt: 'DESC' },
+    });
+
+    const currentCommitIndex = allCommits.findIndex((c) => c.id === commitId);
+
+    const previousCommits =
+      currentCommitIndex >= 0 ? allCommits.slice(currentCommitIndex + 1) : [];
+
+    const findPreviousFeatureState = (
+      featureId: string,
+    ): SpatialFeature | null => {
+      for (const prevCommit of previousCommits) {
+        const feature = prevCommit.features.find(
+          (f) => f.featureId === featureId,
+        );
+        if (feature) {
+          if (feature.operation === FeatureOperation.DELETE) {
+            continue;
+          }
+          return feature;
+        }
+      }
+      return null;
+    };
+
+    const updatedFeatures = commit.features
+      .filter((f) => f.operation === FeatureOperation.UPDATE)
+      .map((updatedFeature) => {
+        const beforeState = findPreviousFeatureState(updatedFeature.featureId);
+        return {
+          after: updatedFeature,
+          before: beforeState,
+        };
+      });
+
     const changes = {
       created: commit.features.filter(
         (f) => f.operation === FeatureOperation.CREATE,
       ),
-      updated: commit.features.filter(
-        (f) => f.operation === FeatureOperation.UPDATE,
-      ),
+      updated: updatedFeatures,
       deleted: commit.features.filter(
         (f) => f.operation === FeatureOperation.DELETE,
       ),

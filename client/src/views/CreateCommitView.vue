@@ -473,6 +473,7 @@
               :height="600"
               :tool="currentTool"
               :features="allFeatures"
+              :branchId="branchId"
               @featureCreated="handleFeatureCreated"
               @featureDeleted="handleFeatureDeleted"
               @featureSelected="handleFeatureSelected"

@@ -90,16 +90,18 @@
           </div>
 
           <div
-            v-for="feature in filteredUpdatedFeatures"
-            :key="'update-' + feature.id"
+            v-for="item in filteredUpdatedFeatures"
+            :key="'update-' + item.after.id"
             class="transition-all"
           >
             <FeatureDiff
-              :featureId="feature.featureId"
-              :geometryType="feature.geometryType"
+              :featureId="item.after.featureId"
+              :geometryType="item.after.geometryType"
               operation="update"
-              :newGeometry="feature.geometry"
-              :newProperties="feature.properties"
+              :oldGeometry="item.before?.geometry"
+              :oldProperties="item.before?.properties"
+              :newGeometry="item.after.geometry"
+              :newProperties="item.after.properties"
             />
           </div>
 
@@ -177,7 +179,7 @@ const filteredDeletedFeatures = computed(() => {
 const allFeatures = computed(() => {
   return [
     ...props.changes.created.map((f) => ({ ...f, operation: FeatureOperation.CREATE })),
-    ...props.changes.updated.map((f) => ({ ...f, operation: FeatureOperation.UPDATE })),
+    ...props.changes.updated.map((item) => ({ ...item.after, operation: FeatureOperation.UPDATE })),
     ...props.changes.deleted.map((f) => ({ ...f, operation: FeatureOperation.DELETE })),
   ];
 });
