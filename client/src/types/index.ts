@@ -178,7 +178,10 @@ export interface CommitChanges {
   };
   changes: {
     created: SpatialFeature[];
-    updated: SpatialFeature[];
+    updated: Array<{
+      before: SpatialFeature | null;
+      after: SpatialFeature;
+    }>;
     deleted: SpatialFeature[];
     total: number;
   };
