@@ -67,8 +67,37 @@ export class BranchController {
   }
 
   @Get(':id/features')
-  getLatestFeatures(@Param('id') id: string) {
-    return this.branchService.getLatestFeatures(id);
+  async getLatestFeatures(
+    @Param('id') id: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+    @Query('bbox') bbox?: string,
+  ) {
+    const pageNum = page ? parseInt(page, 10) : undefined;
+    const limitNum = limit ? Math.min(parseInt(limit, 10), 1000) : undefined;
+
+    const result = await this.branchService.getLatestFeatures(
+      id,
+      pageNum,
+      limitNum,
+      bbox,
+    );
+
+    if (pageNum && limitNum) {
+      return {
+        data: result.features,
+        meta: {
+          page: pageNum,
+          limit: limitNum,
+          total: result.total,
+          totalPages: Math.ceil(result.total / limitNum),
+          hasNextPage: pageNum < Math.ceil(result.total / limitNum),
+          hasPreviousPage: pageNum > 1,
+        },
+      };
+    }
+
+    return result.features;
   }
 
   @Get(':id/export/geojson')
@@ -78,20 +107,15 @@ export class BranchController {
     @CurrentUser() user: User,
     @Res() res: Response,
   ) {
-    // Get branch details to validate access
     const branch = await this.branchService.findOne(branchId, user);
 
-    // Get all latest features from the branch
-    const features = await this.branchService.getLatestFeatures(branchId);
+    const { features } = await this.branchService.getLatestFeatures(branchId);
 
-    // Convert to GeoJSON format
     const geojson = this.geoJsonService.exportToGeoJson(features);
 
-    // Set download headers
     const filename = `${branch.name.replace(/[^a-z0-9]/gi, '_')}_export.geojson`;
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
 
-    // Send GeoJSON with pretty formatting
     return res.send(JSON.stringify(geojson, null, 2));
   }
 
@@ -104,7 +128,7 @@ export class BranchController {
   ) {
     const branch = await this.branchService.findOne(branchId, user);
 
-    const features = await this.branchService.getLatestFeatures(branchId);
+    const { features } = await this.branchService.getLatestFeatures(branchId);
 
     const filename = branch.name.replace(/[^a-z0-9]/gi, '_');
     const zipBuffer = await this.shapefileService.exportToShapefile(
