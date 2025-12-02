@@ -165,15 +165,24 @@ export class CommitService {
     }
   }
 
-  findAll(branchId: string): Promise<Commit[]> {
-    return this.commitRepository.find({
+  async findAll(
+    branchId: string,
+    page: number = 1,
+    limit: number = 20,
+  ): Promise<{ commits: Commit[]; total: number }> {
+    const skip = (page - 1) * limit;
+
+    const [commits, total] = await this.commitRepository.findAndCount({
       where: { branchId },
       relations: {
-        features: true,
         author: true,
       },
       order: { createdAt: 'DESC' },
+      take: limit,
+      skip,
     });
+
+    return { commits, total };
   }
 
   async findOne(id: string): Promise<Commit> {
@@ -193,27 +202,37 @@ export class CommitService {
     return commit;
   }
 
-  async getBranchHistory(branchId: string): Promise<Commit[]> {
-    const commits = await this.findAll(branchId);
-
-    return commits;
+  async getBranchHistory(
+    branchId: string,
+    page: number = 1,
+    limit: number = 50,
+  ): Promise<{ commits: Commit[]; total: number }> {
+    return this.findAll(branchId, page, limit);
   }
 
   async getFeatureHistory(branchId: string, featureId: string) {
-    const commits = await this.commitRepository.find({
-      where: { branchId },
-      relations: { features: true },
-      order: { createdAt: 'ASC' },
-    });
+    const query = `
+      SELECT
+        sf.id,
+        sf.feature_id as "featureId",
+        sf.geometry_type as "geometryType",
+        sf.geometry,
+        sf.properties,
+        sf.operation,
+        sf.commit_id as "commitId",
+        sf.created_at as "createdAt",
+        sf.updated_at as "updatedAt"
+      FROM spatial_features sf
+      INNER JOIN commits c ON sf.commit_id = c.id
+      WHERE c.branch_id = $1
+        AND sf.feature_id = $2
+      ORDER BY c.created_at ASC, sf.created_at ASC
+    `;
 
-    const featureHistory: SpatialFeature[] = [];
-
-    for (const commit of commits) {
-      const feature = commit.features.find((f) => f.featureId === featureId);
-      if (feature) {
-        featureHistory.push(feature);
-      }
-    }
+    const featureHistory = await this.dataSource.query(query, [
+      branchId,
+      featureId,
+    ]);
 
     return featureHistory;
   }
@@ -295,13 +314,127 @@ export class CommitService {
   }
 
   async compareBranches(sourceBranchId: string, targetBranchId: string) {
-    const sourceFeatures =
-      await this.branchService.getLatestFeatures(sourceBranchId);
-    const targetFeatures =
-      await this.branchService.getLatestFeatures(targetBranchId);
+    const sourceBranch = await this.branchRepository.findOne({
+      where: { id: sourceBranchId },
+    });
+    const targetBranch = await this.branchRepository.findOne({
+      where: { id: targetBranchId },
+    });
 
-    const sourceMap = new Map(sourceFeatures.map((f) => [f.featureId, f]));
-    const targetMap = new Map(targetFeatures.map((f) => [f.featureId, f]));
+    if (!sourceBranch || !targetBranch) {
+      throw new NotFoundException('Branch not found');
+    }
+
+    if (!sourceBranch.headCommitId || !targetBranch.headCommitId) {
+      return {
+        sourceBranchId,
+        targetBranchId,
+        summary: { added: 0, modified: 0, deleted: 0, unchanged: 0 },
+        changes: { added: [], modified: [], deleted: [], unchanged: [] },
+      };
+    }
+
+    const query = `
+      WITH RECURSIVE
+      source_commit_chain AS (
+        SELECT id, parent_commit_id, created_at, 0 as depth
+        FROM commits
+        WHERE id = $1
+
+        UNION ALL
+
+        SELECT c.id, c.parent_commit_id, c.created_at, scc.depth + 1
+        FROM commits c
+        INNER JOIN source_commit_chain scc ON c.id = scc.parent_commit_id
+        WHERE scc.depth < 1000
+      ),
+      target_commit_chain AS (
+        SELECT id, parent_commit_id, created_at, 0 as depth
+        FROM commits
+        WHERE id = $2
+
+        UNION ALL
+
+        SELECT c.id, c.parent_commit_id, c.created_at, tcc.depth + 1
+        FROM commits c
+        INNER JOIN target_commit_chain tcc ON c.id = tcc.parent_commit_id
+        WHERE tcc.depth < 1000
+      ),
+      source_features AS (
+        SELECT
+          sf.id,
+          sf.feature_id,
+          sf.geometry_type,
+          sf.geometry,
+          sf.geom,
+          sf.properties,
+          sf.operation,
+          sf.commit_id,
+          sf.created_at,
+          ROW_NUMBER() OVER (
+            PARTITION BY sf.feature_id
+            ORDER BY scc.created_at DESC
+          ) as rn
+        FROM spatial_features sf
+        INNER JOIN source_commit_chain scc ON sf.commit_id = scc.id
+        WHERE sf.operation != $3
+      ),
+      source_latest AS (
+        SELECT * FROM source_features WHERE rn = 1
+      ),
+      target_features AS (
+        SELECT
+          sf.id,
+          sf.feature_id,
+          sf.geometry_type,
+          sf.geometry,
+          sf.geom,
+          sf.properties,
+          sf.operation,
+          sf.commit_id,
+          sf.created_at,
+          ROW_NUMBER() OVER (
+            PARTITION BY sf.feature_id
+            ORDER BY tcc.created_at DESC
+          ) as rn
+        FROM spatial_features sf
+        INNER JOIN target_commit_chain tcc ON sf.commit_id = tcc.id
+        WHERE sf.operation != $3
+      ),
+      target_latest AS (
+        SELECT * FROM target_features WHERE rn = 1
+      )
+      SELECT
+        COALESCE(s.feature_id, t.feature_id) as feature_id,
+        CASE
+          WHEN s.feature_id IS NULL THEN 'deleted'
+          WHEN t.feature_id IS NULL THEN 'added'
+          WHEN NOT ST_Equals(s.geom, t.geom) OR s.properties::text != t.properties::text THEN 'modified'
+          ELSE 'unchanged'
+        END as change_type,
+        s.id as source_id,
+        s.geometry_type as source_geometry_type,
+        s.geometry as source_geometry,
+        s.properties as source_properties,
+        s.operation as source_operation,
+        s.commit_id as source_commit_id,
+        s.created_at as source_created_at,
+        t.id as target_id,
+        t.geometry_type as target_geometry_type,
+        t.geometry as target_geometry,
+        t.properties as target_properties,
+        t.operation as target_operation,
+        t.commit_id as target_commit_id,
+        t.created_at as target_created_at
+      FROM source_latest s
+      FULL OUTER JOIN target_latest t ON s.feature_id = t.feature_id
+    `;
+
+    const results = await this.dataSource.query(query, [
+      sourceBranch.headCommitId,
+      targetBranch.headCommitId,
+      FeatureOperation.DELETE,
+    ]);
 
     const comparison = {
       added: [] as SpatialFeature[],
@@ -310,29 +443,67 @@ export class CommitService {
       unchanged: [] as SpatialFeature[],
     };
 
-    for (const [featureId, sourceFeature] of sourceMap) {
-      const targetFeature = targetMap.get(featureId);
-
-      if (!targetFeature) {
-        comparison.added.push(sourceFeature);
+    for (const row of results) {
+      if (row.change_type === 'added' && row.source_id) {
+        comparison.added.push({
+          id: row.source_id,
+          featureId: row.feature_id,
+          geometryType: row.source_geometry_type,
+          geometry: row.source_geometry,
+          properties: row.source_properties,
+          operation: row.source_operation,
+          commitId: row.source_commit_id,
+          createdAt: row.source_created_at,
+        } as SpatialFeature);
+      } else if (row.change_type === 'deleted' && row.target_id) {
+        comparison.deleted.push({
+          id: row.target_id,
+          featureId: row.feature_id,
+          geometryType: row.target_geometry_type,
+          geometry: row.target_geometry,
+          properties: row.target_properties,
+          operation: row.target_operation,
+          commitId: row.target_commit_id,
+          createdAt: row.target_created_at,
+        } as SpatialFeature);
       } else if (
-        JSON.stringify(sourceFeature.geometry) !==
-          JSON.stringify(targetFeature.geometry) ||
-        JSON.stringify(sourceFeature.properties) !==
-          JSON.stringify(targetFeature.properties)
+        row.change_type === 'modified' &&
+        row.source_id &&
+        row.target_id
       ) {
         comparison.modified.push({
-          source: sourceFeature,
-          target: targetFeature,
+          source: {
+            id: row.source_id,
+            featureId: row.feature_id,
+            geometryType: row.source_geometry_type,
+            geometry: row.source_geometry,
+            properties: row.source_properties,
+            operation: row.source_operation,
+            commitId: row.source_commit_id,
+            createdAt: row.source_created_at,
+          } as SpatialFeature,
+          target: {
+            id: row.target_id,
+            featureId: row.feature_id,
+            geometryType: row.target_geometry_type,
+            geometry: row.target_geometry,
+            properties: row.target_properties,
+            operation: row.target_operation,
+            commitId: row.target_commit_id,
+            createdAt: row.target_created_at,
+          } as SpatialFeature,
         });
-      } else {
-        comparison.unchanged.push(sourceFeature);
-      }
-    }
-
-    for (const [featureId, targetFeature] of targetMap) {
-      if (!sourceMap.has(featureId)) {
-        comparison.deleted.push(targetFeature);
+      } else if (row.change_type === 'unchanged' && row.source_id) {
+        comparison.unchanged.push({
+          id: row.source_id,
+          featureId: row.feature_id,
+          geometryType: row.source_geometry_type,
+          geometry: row.source_geometry,
+          properties: row.source_properties,
+          operation: row.source_operation,
+          commitId: row.source_commit_id,
+          createdAt: row.source_created_at,
+        } as SpatialFeature);
       }
     }
 
