@@ -195,7 +195,7 @@ export class BranchService {
           INNER JOIN commit_chain cc ON sf.commit_id = cc.id
         )
         SELECT * FROM features_with_order
-        WHERE rn = 1 AND operation != 'delete'
+        WHERE rn = 1 AND operation != '${FeatureOperation.DELETE}'
       ),
       target_features AS (
         WITH RECURSIVE commit_chain AS (
@@ -220,7 +220,7 @@ export class BranchService {
           INNER JOIN commit_chain cc ON sf.commit_id = cc.id
         )
         SELECT * FROM features_with_order
-        WHERE rn = 1 AND operation != 'delete'
+        WHERE rn = 1 AND operation != '${FeatureOperation.DELETE}'
       )
       SELECT
         sf.feature_id as "featureId",
@@ -430,7 +430,7 @@ export class BranchService {
           created_at as "createdAt"
         FROM features_with_order
         WHERE rn = 1
-          AND operation != 'delete'
+          AND operation != '${FeatureOperation.DELETE}'
       )
       SELECT * FROM latest_features
       ORDER BY "featureId"
