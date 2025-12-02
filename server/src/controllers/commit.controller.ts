@@ -34,7 +34,13 @@ export class CommitController {
   }
 
   @Post('import/geojson')
-  @UseInterceptors(FileInterceptor('file'))
+  @UseInterceptors(
+    FileInterceptor('file', {
+      limits: {
+        fileSize: 100 * 1024 * 1024, // 100MB limit
+      },
+    }),
+  )
   async importGeoJson(
     @UploadedFile() file: Express.Multer.File,
     @Body('branchId') branchId: string,
@@ -81,7 +87,13 @@ export class CommitController {
   }
 
   @Post('parse/shapefile')
-  @UseInterceptors(FileInterceptor('file'))
+  @UseInterceptors(
+    FileInterceptor('file', {
+      limits: {
+        fileSize: 2 * 1024 * 1024 * 1024, // 2GB limit
+      },
+    }),
+  )
   async parseShapefile(@UploadedFile() file: Express.Multer.File) {
     if (!file) {
       throw new BadRequestException('No file uploaded');
@@ -98,8 +110,31 @@ export class CommitController {
   }
 
   @Get()
-  findAll(@Query('branchId') branchId: string) {
-    return this.commitService.findAll(branchId);
+  async findAll(
+    @Query('branchId') branchId: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+  ) {
+    const pageNum = page ? parseInt(page, 10) : 1;
+    const limitNum = limit ? Math.min(parseInt(limit, 10), 100) : 20;
+
+    const { commits, total } = await this.commitService.findAll(
+      branchId,
+      pageNum,
+      limitNum,
+    );
+
+    return {
+      data: commits,
+      meta: {
+        page: pageNum,
+        limit: limitNum,
+        total,
+        totalPages: Math.ceil(total / limitNum),
+        hasNextPage: pageNum < Math.ceil(total / limitNum),
+        hasPreviousPage: pageNum > 1,
+      },
+    };
   }
 
   @Get(':id')
@@ -108,8 +143,31 @@ export class CommitController {
   }
 
   @Get('branch/:branchId/history')
-  getBranchHistory(@Param('branchId') branchId: string) {
-    return this.commitService.getBranchHistory(branchId);
+  async getBranchHistory(
+    @Param('branchId') branchId: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+  ) {
+    const pageNum = page ? parseInt(page, 10) : 1;
+    const limitNum = limit ? Math.min(parseInt(limit, 10), 100) : 50;
+
+    const { commits, total } = await this.commitService.getBranchHistory(
+      branchId,
+      pageNum,
+      limitNum,
+    );
+
+    return {
+      data: commits,
+      meta: {
+        page: pageNum,
+        limit: limitNum,
+        total,
+        totalPages: Math.ceil(total / limitNum),
+        hasNextPage: pageNum < Math.ceil(total / limitNum),
+        hasPreviousPage: pageNum > 1,
+      },
+    };
   }
 
   @Get('feature-history/:branchId/:featureId')

@@ -8,6 +8,7 @@ import type {
   CreateCommitRequest,
   SpatialFeature,
   BranchConflicts,
+  PaginationMeta,
 } from "@/types";
 
 export const useSpatialStore = defineStore("spatial", () => {
@@ -17,7 +18,9 @@ export const useSpatialStore = defineStore("spatial", () => {
   const branchHasOpenMergeRequest = ref(false);
   const branchHasUnresolvedConflicts = ref(false);
   const commits = ref<Commit[]>([]);
+  const commitsPagination = ref<PaginationMeta | null>(null);
   const features = ref<SpatialFeature[]>([]);
+  const featuresPagination = ref<PaginationMeta | null>(null);
   const conflicts = ref<BranchConflicts | null>(null);
   const loading = ref(false);
   const error = ref<string | null>(null);
@@ -100,11 +103,26 @@ export const useSpatialStore = defineStore("spatial", () => {
     }
   };
 
-  const fetchLatestFeatures = async (branchId: string) => {
+  const fetchLatestFeatures = async (
+    branchId: string,
+    page?: number,
+    limit?: number,
+    bbox?: string
+  ) => {
     loading.value = true;
     error.value = null;
     try {
-      features.value = await api.getLatestFeatures(branchId);
+      const result = await api.getLatestFeatures(branchId, page, limit, bbox);
+
+      // Handle both paginated and non-paginated responses
+      if (Array.isArray(result)) {
+        features.value = result;
+        featuresPagination.value = null;
+      } else {
+        features.value = result.data;
+        featuresPagination.value = result.meta;
+      }
+
       return features.value;
     } catch (err: any) {
       error.value = err.response?.data?.message || "Failed to fetch features";
@@ -115,11 +133,17 @@ export const useSpatialStore = defineStore("spatial", () => {
   };
 
   // Commits
-  const fetchCommits = async (branchId: string) => {
+  const fetchCommits = async (
+    branchId: string,
+    page: number = 1,
+    limit: number = 20
+  ) => {
     loading.value = true;
     error.value = null;
     try {
-      commits.value = await api.getCommits(branchId);
+      const result = await api.getCommits(branchId, page, limit);
+      commits.value = result.data;
+      commitsPagination.value = result.meta;
     } catch (err: any) {
       error.value = err.response?.data?.message || "Failed to fetch commits";
       throw err;
@@ -143,11 +167,17 @@ export const useSpatialStore = defineStore("spatial", () => {
     }
   };
 
-  const fetchBranchHistory = async (branchId: string) => {
+  const fetchBranchHistory = async (
+    branchId: string,
+    page: number = 1,
+    limit: number = 50
+  ) => {
     loading.value = true;
     error.value = null;
     try {
-      commits.value = await api.getBranchHistory(branchId);
+      const result = await api.getBranchHistory(branchId, page, limit);
+      commits.value = result.data;
+      commitsPagination.value = result.meta;
     } catch (err: any) {
       error.value = err.response?.data?.message || "Failed to fetch history";
       throw err;
@@ -201,7 +231,9 @@ export const useSpatialStore = defineStore("spatial", () => {
     branchHasOpenMergeRequest,
     branchHasUnresolvedConflicts,
     commits,
+    commitsPagination,
     features,
+    featuresPagination,
     conflicts,
     loading,
     error,

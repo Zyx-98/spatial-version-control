@@ -13,21 +13,48 @@ export class MvtService {
     layerName: string = 'features',
   ): Promise<Buffer> {
     const query = `
-      WITH latest_features AS (
-        SELECT DISTINCT ON (sf.feature_id)
+      WITH RECURSIVE commit_chain AS (
+        SELECT c.id, c.parent_commit_id, c.created_at, 0 as depth
+        FROM commits c
+        JOIN branches b ON c.branch_id = b.id
+        WHERE b.id = $1
+
+        UNION ALL
+
+        SELECT c.id, c.parent_commit_id, c.created_at, cc.depth + 1
+        FROM commits c
+        INNER JOIN commit_chain cc ON c.id = cc.parent_commit_id
+        WHERE cc.depth < 1000
+      ),
+      features_with_order AS (
+        SELECT
           sf.id,
           sf.feature_id,
           sf.geometry_type,
           sf.properties,
           sf.operation,
           sf.geom,
-          sf.commit_id
+          sf.commit_id,
+          ROW_NUMBER() OVER (
+            PARTITION BY sf.feature_id
+            ORDER BY cc.created_at DESC, sf.created_at DESC
+          ) as rn
         FROM spatial_features sf
-        JOIN commits c ON sf.commit_id = c.id
-        JOIN branches b ON c.branch_id = b.id
-        WHERE b.id = $1
-          AND sf.operation != 'delete'
-        ORDER BY sf.feature_id, c.created_at DESC, sf.created_at DESC
+        INNER JOIN commit_chain cc ON sf.commit_id = cc.id
+        WHERE sf.operation != 'delete'
+          AND sf.geom IS NOT NULL
+      ),
+      latest_features AS (
+        SELECT
+          id,
+          feature_id,
+          geometry_type,
+          properties,
+          operation,
+          geom,
+          commit_id
+        FROM features_with_order
+        WHERE rn = 1
       ),
       mvt_features AS (
         SELECT
@@ -96,21 +123,48 @@ export class MvtService {
     }
 
     const query = `
-      WITH target_features AS (
-        SELECT DISTINCT ON (sf.feature_id)
+      WITH RECURSIVE commit_chain AS (
+        SELECT id, parent_commit_id, created_at, 0 as depth
+        FROM commits
+        WHERE branch_id = $1
+
+        UNION ALL
+
+        SELECT c.id, c.parent_commit_id, c.created_at, cc.depth + 1
+        FROM commits c
+        INNER JOIN commit_chain cc ON c.id = cc.parent_commit_id
+        WHERE cc.depth < 1000
+      ),
+      features_with_order AS (
+        SELECT
           sf.id,
           sf.feature_id,
           sf.geometry_type,
           sf.properties,
           sf.operation,
           sf.geom,
-          sf.commit_id
+          sf.commit_id,
+          ROW_NUMBER() OVER (
+            PARTITION BY sf.feature_id
+            ORDER BY cc.created_at DESC, sf.created_at DESC
+          ) as rn
         FROM spatial_features sf
-        JOIN commits c ON sf.commit_id = c.id
-        WHERE c.branch_id = $1
-          AND sf.feature_id = ANY($2::uuid[])
+        INNER JOIN commit_chain cc ON sf.commit_id = cc.id
+        WHERE sf.feature_id = ANY($2::uuid[])
           AND sf.operation != 'delete'
-        ORDER BY sf.feature_id, c.created_at DESC, sf.created_at DESC
+          AND sf.geom IS NOT NULL
+      ),
+      target_features AS (
+        SELECT
+          id,
+          feature_id,
+          geometry_type,
+          properties,
+          operation,
+          geom,
+          commit_id
+        FROM features_with_order
+        WHERE rn = 1
       ),
       mvt_features AS (
         SELECT

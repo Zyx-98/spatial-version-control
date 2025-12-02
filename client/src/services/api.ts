@@ -20,6 +20,7 @@ import type {
   SpatialFeature,
   ConflictResolution,
   DiffSummary,
+  PaginatedResponse,
 } from "@/types";
 
 const API_BASE_URL =
@@ -139,11 +140,24 @@ class ApiService {
     return response.data;
   }
 
-  async getLatestFeatures(branchId: string): Promise<SpatialFeature[]> {
-    const response = await this.api.get<SpatialFeature[]>(
-      `/branches/${branchId}/features`
+  async getLatestFeatures(
+    branchId: string,
+    page?: number,
+    limit?: number,
+    bbox?: string
+  ): Promise<SpatialFeature[] | PaginatedResponse<SpatialFeature>> {
+    const params: any = {};
+    if (page !== undefined) params.page = page;
+    if (limit !== undefined) params.limit = limit;
+    if (bbox) params.bbox = bbox;
+
+    const response = await this.api.get(
+      `/branches/${branchId}/features`,
+      { params }
     );
     return response.data;
+    // Returns SpatialFeature[] if no pagination params
+    // Returns PaginatedResponse<SpatialFeature> if page/limit provided
   }
 
   async getBranchDiffSummary(
@@ -158,9 +172,13 @@ class ApiService {
     return response.data;
   }
 
-  async getCommits(branchId: string): Promise<Commit[]> {
-    const response = await this.api.get<Commit[]>("/commits", {
-      params: { branchId },
+  async getCommits(
+    branchId: string,
+    page: number = 1,
+    limit: number = 20
+  ): Promise<PaginatedResponse<Commit>> {
+    const response = await this.api.get<PaginatedResponse<Commit>>("/commits", {
+      params: { branchId, page, limit },
     });
     return response.data;
   }
@@ -207,9 +225,14 @@ class ApiService {
     return response.data;
   }
 
-  async getBranchHistory(branchId: string): Promise<Commit[]> {
-    const response = await this.api.get<Commit[]>(
-      `/commits/branch/${branchId}/history`
+  async getBranchHistory(
+    branchId: string,
+    page: number = 1,
+    limit: number = 50
+  ): Promise<PaginatedResponse<Commit>> {
+    const response = await this.api.get<PaginatedResponse<Commit>>(
+      `/commits/branch/${branchId}/history`,
+      { params: { page, limit } }
     );
     return response.data;
   }

@@ -28,8 +28,6 @@ export class MergeRequestService {
   constructor(
     @InjectRepository(MergeRequest)
     private mergeRequestRepository: Repository<MergeRequest>,
-    @InjectRepository(Branch)
-    private branchRepository: Repository<Branch>,
     @InjectRepository(Commit)
     private commitRepository: Repository<Commit>,
     private branchService: BranchService,
@@ -231,9 +229,8 @@ export class MergeRequestService {
         );
       }
 
-      const sourceFeatures = await this.branchService.getLatestFeatures(
-        sourceBranch.id,
-      );
+      const { features: sourceFeatures } =
+        await this.branchService.getLatestFeatures(sourceBranch.id);
 
       const mergeCommit = queryRunner.manager.create(Commit, {
         message: `Merge branch '${sourceBranch.name}' into '${targetBranch.name}'`,
@@ -346,12 +343,10 @@ export class MergeRequestService {
           );
         }
 
-        const branchFeatures = await this.branchService.getLatestFeatures(
-          sourceBranch.id,
-        );
-        const mainFeatures = await this.branchService.getLatestFeatures(
-          targetBranch.id,
-        );
+        const { features: branchFeatures } =
+          await this.branchService.getLatestFeatures(sourceBranch.id);
+        const { features: mainFeatures } =
+          await this.branchService.getLatestFeatures(targetBranch.id);
 
         const branchFeatureMap = new Map(
           branchFeatures.map((f) => [f.featureId, f]),

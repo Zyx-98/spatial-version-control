@@ -167,50 +167,102 @@ export class BranchService {
     sourceBranch: Branch,
     targetBranch: Branch,
   ): Promise<ConflictDetail[]> {
-    const conflicts: ConflictDetail[] = [];
-
-    const sourceCommit = await this.commitRepository.findOne({
-      where: { id: sourceBranch.headCommitId },
-      relations: {
-        features: true,
-      },
-    });
-
-    const targetCommit = await this.commitRepository.findOne({
-      where: { id: targetBranch.headCommitId },
-      relations: {
-        features: true,
-      },
-    });
-
-    if (!sourceCommit || !targetCommit) {
-      return conflicts;
+    if (!sourceBranch.headCommitId || !targetBranch.headCommitId) {
+      return [];
     }
 
-    const sourceFeatures = await this.getLatestFeatures(sourceBranch.id);
-    const targetFeatures = await this.getLatestFeatures(targetBranch.id);
+    const query = `
+      WITH source_features AS (
+        WITH RECURSIVE commit_chain AS (
+          SELECT id, parent_commit_id, created_at, 0 as depth
+          FROM commits
+          WHERE id = $1
+          UNION ALL
+          SELECT c.id, c.parent_commit_id, c.created_at, cc.depth + 1
+          FROM commits c
+          INNER JOIN commit_chain cc ON c.id = cc.parent_commit_id
+          WHERE cc.depth < 1000
+        ),
+        features_with_order AS (
+          SELECT
+            sf.*,
+            cc.created_at as commit_created_at,
+            ROW_NUMBER() OVER (
+              PARTITION BY sf.feature_id
+              ORDER BY cc.created_at DESC
+            ) as rn
+          FROM spatial_features sf
+          INNER JOIN commit_chain cc ON sf.commit_id = cc.id
+        )
+        SELECT * FROM features_with_order
+        WHERE rn = 1 AND operation != 'delete'
+      ),
+      target_features AS (
+        WITH RECURSIVE commit_chain AS (
+          SELECT id, parent_commit_id, created_at, 0 as depth
+          FROM commits
+          WHERE id = $2
+          UNION ALL
+          SELECT c.id, c.parent_commit_id, c.created_at, cc.depth + 1
+          FROM commits c
+          INNER JOIN commit_chain cc ON c.id = cc.parent_commit_id
+          WHERE cc.depth < 1000
+        ),
+        features_with_order AS (
+          SELECT
+            sf.*,
+            cc.created_at as commit_created_at,
+            ROW_NUMBER() OVER (
+              PARTITION BY sf.feature_id
+              ORDER BY cc.created_at DESC
+            ) as rn
+          FROM spatial_features sf
+          INNER JOIN commit_chain cc ON sf.commit_id = cc.id
+        )
+        SELECT * FROM features_with_order
+        WHERE rn = 1 AND operation != 'delete'
+      )
+      SELECT
+        sf.feature_id as "featureId",
+        'both_modified' as "conflictType"
+      FROM source_features sf
+      INNER JOIN target_features tf ON sf.feature_id = tf.feature_id
+      WHERE NOT ST_Equals(sf.geom, tf.geom)
+         OR sf.properties::text != tf.properties::text;
+    `;
 
-    const sourceFeatureMap = new Map(
-      sourceFeatures.map((f) => [f.featureId, f]),
-    );
+    const conflictIds = await this.dataSource.query(query, [
+      sourceBranch.headCommitId,
+      targetBranch.headCommitId,
+    ]);
 
-    const targetFeatureMap = new Map(
-      targetFeatures.map((f) => [f.featureId, f]),
-    );
+    const conflicts: ConflictDetail[] = [];
 
-    const commonAncestor = await this.findCommonAncestor(
-      sourceBranch,
-      targetBranch,
-    );
+    if (conflictIds.length > 0) {
+      const { features: sourceFeatures } = await this.getLatestFeatures(
+        sourceBranch.id,
+      );
+      const { features: targetFeatures } = await this.getLatestFeatures(
+        targetBranch.id,
+      );
 
-    for (const [featureId, sourceFeature] of sourceFeatureMap) {
-      const targetFeature = targetFeatureMap.get(featureId);
+      const sourceFeatureMap = new Map(
+        sourceFeatures.map((f) => [f.featureId, f]),
+      );
+      const targetFeatureMap = new Map(
+        targetFeatures.map((f) => [f.featureId, f]),
+      );
 
-      if (targetFeature) {
-        if (
-          JSON.stringify(sourceFeature.geometry) !==
-          JSON.stringify(targetFeature.geometry)
-        ) {
+      const commonAncestor = await this.findCommonAncestor(
+        sourceBranch,
+        targetBranch,
+      );
+
+      for (const { featureId } of conflictIds) {
+        const sourceFeature = sourceFeatureMap.get(featureId);
+        const targetFeature = targetFeatureMap.get(featureId);
+
+        if (sourceFeature && targetFeature) {
           let ancestorFeature: SpatialFeature | null = null;
           if (commonAncestor) {
             ancestorFeature = await this.getFeatureAtCommit(
@@ -297,7 +349,12 @@ export class BranchService {
     return features.get(featureId) || null;
   }
 
-  async getLatestFeatures(branchId: string): Promise<SpatialFeature[]> {
+  async getLatestFeatures(
+    branchId: string,
+    page?: number,
+    limit?: number,
+    bbox?: string,
+  ): Promise<{ features: SpatialFeature[]; total: number }> {
     const branch = await this.branchRepository.findOne({
       where: { id: branchId },
     });
@@ -307,48 +364,153 @@ export class BranchService {
     }
 
     if (!branch.headCommitId) {
-      return [];
+      return { features: [], total: 0 };
     }
 
-    const commits = await this.getCommitHistory(branch.headCommitId);
+    const usePagination = page !== undefined && limit !== undefined;
+    const paginationClause = usePagination ? `LIMIT $2 OFFSET $3` : '';
 
-    const featureMap = new Map<string, SpatialFeature>();
+    let bboxFilter = '';
+    const queryParams: any[] = [branch.headCommitId];
 
-    for (const commit of commits.reverse()) {
-      for (const feature of commit.features) {
-        if (feature.operation === FeatureOperation.DELETE) {
-          featureMap.delete(feature.featureId);
-        } else {
-          featureMap.set(feature.featureId, feature);
-        }
+    if (bbox) {
+      const [minLng, minLat, maxLng, maxLat] = bbox.split(',').map(parseFloat);
+      if (![minLng, minLat, maxLng, maxLat].some(isNaN)) {
+        const nextParamIndex = queryParams.length + 1;
+        bboxFilter = `AND sf.geom && ST_MakeEnvelope($${nextParamIndex}, $${nextParamIndex + 1}, $${nextParamIndex + 2}, $${nextParamIndex + 3}, 4326)`;
+        queryParams.push(minLng, minLat, maxLng, maxLat);
       }
     }
 
-    return Array.from(featureMap.values());
+    if (usePagination) {
+      queryParams.push(limit, (page - 1) * limit);
+    }
+
+    const query = `
+      WITH RECURSIVE commit_chain AS (
+        SELECT id, parent_commit_id, created_at, 0 as depth
+        FROM commits
+        WHERE id = $1
+
+        UNION ALL
+
+        SELECT c.id, c.parent_commit_id, c.created_at, cc.depth + 1
+        FROM commits c
+        INNER JOIN commit_chain cc ON c.id = cc.parent_commit_id
+        WHERE cc.depth < 1000
+      ),
+      features_with_order AS (
+        SELECT
+          sf.id,
+          sf.feature_id,
+          sf.geometry_type,
+          sf.geometry,
+          sf.properties,
+          sf.operation,
+          sf.commit_id,
+          sf.created_at,
+          cc.created_at as commit_created_at,
+          ROW_NUMBER() OVER (
+            PARTITION BY sf.feature_id
+            ORDER BY cc.created_at DESC
+          ) as rn
+        FROM spatial_features sf
+        INNER JOIN commit_chain cc ON sf.commit_id = cc.id
+        ${bboxFilter}
+      ),
+      latest_features AS (
+        SELECT
+          id,
+          feature_id as "featureId",
+          geometry_type as "geometryType",
+          geometry,
+          properties,
+          operation,
+          commit_id as "commitId",
+          created_at as "createdAt"
+        FROM features_with_order
+        WHERE rn = 1
+          AND operation != 'delete'
+      )
+      SELECT * FROM latest_features
+      ORDER BY "featureId"
+      ${paginationClause};
+    `;
+
+    const results = await this.dataSource.query(query, queryParams);
+
+    let total = results.length;
+    if (usePagination) {
+      const countQuery = `
+        WITH RECURSIVE commit_chain AS (
+          SELECT id, parent_commit_id, created_at, 0 as depth
+          FROM commits
+          WHERE id = $1
+
+          UNION ALL
+
+          SELECT c.id, c.parent_commit_id, c.created_at, cc.depth + 1
+          FROM commits c
+          INNER JOIN commit_chain cc ON c.id = cc.parent_commit_id
+          WHERE cc.depth < 1000
+        ),
+        features_with_order AS (
+          SELECT
+            sf.feature_id,
+            ROW_NUMBER() OVER (
+              PARTITION BY sf.feature_id
+              ORDER BY cc.created_at DESC
+            ) as rn
+          FROM spatial_features sf
+          INNER JOIN commit_chain cc ON sf.commit_id = cc.id
+          ${bboxFilter}
+        )
+        SELECT COUNT(*) as count
+        FROM features_with_order
+        WHERE rn = 1
+          AND NOT EXISTS (
+            SELECT 1 FROM features_with_order fwo2
+            WHERE fwo2.feature_id = features_with_order.feature_id
+              AND fwo2.rn = 1
+          );
+      `;
+
+      const countParams = queryParams.slice(0, queryParams.length - 2);
+      const countResult = await this.dataSource.query(countQuery, countParams);
+      total = parseInt(countResult[0]?.count || '0');
+    }
+
+    return { features: results, total };
   }
 
   private async getCommitHistory(headCommitId: string): Promise<Commit[]> {
-    const commits: Commit[] = [];
-    let currentCommitId: string | null = headCommitId;
+    const query = `
+      WITH RECURSIVE commit_chain AS (
+        SELECT id, branch_id, message, author_id, parent_commit_id, created_at, 0 as depth
+        FROM commits
+        WHERE id = $1
 
-    let maxIterations = 1000;
+        UNION ALL
 
-    while (currentCommitId && maxIterations > 0) {
-      const commit = await this.commitRepository.findOne({
-        where: { id: currentCommitId },
-        relations: { features: true },
-      });
+        SELECT c.id, c.branch_id, c.message, c.author_id, c.parent_commit_id, c.created_at, cc.depth + 1
+        FROM commits c
+        INNER JOIN commit_chain cc ON c.id = cc.parent_commit_id
+        WHERE cc.depth < 1000
+      )
+      SELECT
+        id,
+        branch_id as "branchId",
+        message,
+        author_id as "authorId",
+        parent_commit_id as "parentCommitId",
+        created_at as "createdAt"
+      FROM commit_chain
+      ORDER BY created_at ASC;
+    `;
 
-      if (!commit) {
-        break;
-      }
+    const results = await this.dataSource.query(query, [headCommitId]);
 
-      commits.push(commit);
-      currentCommitId = commit.parentCommitId;
-      maxIterations--;
-    }
-
-    return commits;
+    return results;
   }
 
   canEditBranch(branch: Branch, user: User): boolean {
@@ -430,8 +592,12 @@ export class BranchService {
       throw new NotFoundException('Main branch not found');
     }
 
-    const branchFeatures = await this.getLatestFeatures(branch.id);
-    const mainFeatures = await this.getLatestFeatures(mainBranch.id);
+    const { features: branchFeatures } = await this.getLatestFeatures(
+      branch.id,
+    );
+    const { features: mainFeatures } = await this.getLatestFeatures(
+      mainBranch.id,
+    );
 
     const branchFeatureMap = new Map(
       branchFeatures.map((f) => [f.featureId, f]),
