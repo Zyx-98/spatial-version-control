@@ -2,6 +2,7 @@ import {
   Column,
   CreateDateColumn,
   Entity,
+  Index,
   JoinColumn,
   ManyToOne,
   OneToMany,
@@ -13,6 +14,9 @@ import { User } from './user.entity';
 import { SpatialFeature } from './spatial-feature.entity';
 
 @Entity('commits')
+@Index('idx_commits_branch_created', ['branchId', 'createdAt'])
+@Index('idx_commits_parent', ['parentCommitId'])
+@Index('idx_commits_branch', ['branchId'])
 export class Commit {
   @PrimaryGeneratedColumn('uuid')
   id: string;
