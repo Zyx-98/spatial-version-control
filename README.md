@@ -55,6 +55,7 @@ A comprehensive spatial data version control system built with NestJS and Postgr
 
 Designed for **high scalability**, the system uses:
 - **PostgreSQL with PostGIS** for efficient spatial indexing and GIST spatial indexes
+- **Redis** for intelligent tile caching with circuit breaker protection
 - **TypeORM** for database query optimization with prepared statements
 - **Pagination** supporting 500K+ features per dataset with 95% memory reduction
 - **Vector Tiles (MVT)** for efficient rendering (50KB tiles vs 10MB GeoJSON)
@@ -67,6 +68,8 @@ Designed for **high scalability**, the system uses:
 - 60-70% faster database queries with optimized indexes
 - 10-20x faster geometry comparisons using PostGIS
 - 95% reduction in memory usage for large commit histories
+- Sub-100ms tile response with Redis caching
+- Graceful degradation under memory pressure
 - Supports 200+ concurrent users
 
 <a name="features"></a>
@@ -180,6 +183,7 @@ docker-compose logs -f
    - Frontend: http://localhost:5173
    - Backend API: http://localhost:3000
    - Database: localhost:5432
+   - Redis: localhost:6379
 
 5. **Initialize the database** (first time only):
 ```bash
@@ -359,8 +363,17 @@ GET /api/branches/:id - Get branch details
 GET /api/branches/:id/with-permissions - Get branch with permission flags
 DELETE /api/branches/:id - Delete branch (Creator or Admin)
 POST /api/branches/:id/fetch-main - Fetch main branch updates and check conflicts
-GET /api/branches/:id/mvt/:z/:x/:y - Get vector tiles for branch (MVT format)
+GET /api/branches/:id/mvt/:z/:x/:y - Get vector tiles for branch (cached, MVT format)
 GET /api/branches/:id/bounds - Get geographic bounds of branch features
+```
+
+### Cache Management
+```
+GET /api/cache/metrics - Get cache performance metrics
+GET /api/cache/status - Get formatted cache status
+GET /api/cache/health - Get Redis health status with memory usage
+POST /api/cache/seed - Pre-generate tiles for a branch (background task)
+POST /api/cache/emergency-relief - Trigger emergency cache cleanup
 ```
 
 ### Commits
@@ -442,10 +455,12 @@ Error responses:
 ### Backend
 - **Framework**: NestJS (Node.js) - Modular architecture for scalability
 - **Database**: PostgreSQL 14+ with PostGIS 3.0+ extension
+- **Cache**: Redis 7+ with LRU eviction and health monitoring
 - **ORM**: TypeORM - Optimized queries with spatial indexing
 - **Vector Tiles**: PostGIS ST_AsMVT for efficient tile generation
 - **Authentication**: JWT (JSON Web Tokens) with bcrypt
 - **Validation**: class-validator, class-transformer
+- **Scheduling**: @nestjs/schedule for automated tasks
 - **API Documentation**: Swagger/OpenAPI (auto-generated)
 
 ### Frontend
@@ -477,6 +492,7 @@ Error responses:
 **Scalability Features:**
 - **Pagination**: Offset-based pagination for commits, features, and history (default 20 items/page, max 100)
 - **Bounding Box Filtering**: Load only features within map viewport
+- **Redis Caching**: Intelligent tile caching with health monitoring and circuit breaker
 - **Connection Pooling**: TypeORM connection pooling for concurrent requests
 - **Prepared Statements**: Parameterized queries for security and performance
 - **Transaction Support**: ACID compliance for data integrity
@@ -565,8 +581,15 @@ Error responses:
   - [x] **Security Enhancements**
     - SQL injection prevention with parameterized queries
     - Input validation with class-validator
+  - [x] **Redis Tile Caching**
+    - LRU eviction policy with 4GB memory limit
+    - Health monitoring with circuit breaker pattern
+    - Graceful degradation under memory pressure
+    - Automatic emergency cache relief at 95% memory
+    - TTL-based caching strategy (varies by zoom level)
+    - Stampede prevention for concurrent requests
+    - Cache metrics and monitoring endpoints
   - [ ] Virtual scrolling for feature lists in UI
-  - [ ] Database query caching with Redis
   - [ ] WebSocket for real-time collaboration updates
 
 - [ ] **Testing**
