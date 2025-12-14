@@ -1,0 +1,297 @@
+import { Injectable, Inject, Logger } from '@nestjs/common';
+import { CACHE_MANAGER } from '@nestjs/cache-manager';
+import { Cache } from 'cache-manager';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { Branch } from '../entities/branch.entity';
+import { MvtService } from './mvt.service';
+
+@Injectable()
+export class TileCacheService {
+  private readonly logger = new Logger(TileCacheService.name);
+
+  private readonly locks = new Map<string, Promise<Buffer>>();
+
+  constructor(
+    @Inject(CACHE_MANAGER) private cacheManager: Cache,
+    @InjectRepository(Branch) private branchRepo: Repository<Branch>,
+    private mvtService: MvtService,
+  ) {}
+
+  async getBranchTile(
+    branchId: string,
+    z: number,
+    x: number,
+    y: number,
+  ): Promise<Buffer> {
+    const startTime = Date.now();
+
+    const cacheKey = await this.buildCacheKey(branchId, z, x, y);
+    const cachedTile = await this.cacheManager.get<Buffer>(cacheKey);
+    if (cachedTile) {
+      const duration = Date.now() - startTime;
+      this.logger.log(`Cache HIT: ${cacheKey} (${duration}ms)`);
+      return cachedTile;
+    }
+
+    this.logger.log(`Cache MISS: ${cacheKey}`);
+
+    const existingLock = this.locks.get(cacheKey);
+    if (existingLock) {
+      this.logger.log(`Waiting for lock: ${cacheKey}`);
+      return existingLock;
+    }
+
+    const generationPromise = this.generateAndCacheTile(
+      branchId,
+      cacheKey,
+      z,
+      x,
+      y,
+    );
+
+    this.locks.set(cacheKey, generationPromise);
+
+    try {
+      const tile = await generationPromise;
+      return tile;
+    } finally {
+      this.locks.delete(cacheKey);
+    }
+  }
+
+  private async generateAndCacheTile(
+    branchId: string,
+    cacheKey: string,
+    z: number,
+    x: number,
+    y: number,
+  ): Promise<Buffer> {
+    const tile = await this.mvtService.generateBranchTile(branchId, z, x, y);
+
+    try {
+      const ttl = this.getCacheTTL(z);
+      await this.cacheManager.set(cacheKey, tile, ttl * 1000);
+    } catch (error) {
+      this.logger.error(`Cache write failed for ${cacheKey}: ${error.message}`);
+    }
+
+    return tile;
+  }
+
+  async getDiffTile(
+    sourceBranchId: string,
+    targetBranchId: string,
+    z: number,
+    x: number,
+    y: number,
+  ): Promise<Buffer> {
+    const cacheKey = `mvt:diff:${sourceBranchId}:${targetBranchId}:${z}:${x}:${y}`;
+
+    const cachedTile = await this.cacheManager.get<Buffer>(cacheKey);
+    if (cachedTile) {
+      return cachedTile;
+    }
+
+    const existingLock = this.locks.get(cacheKey);
+    if (existingLock) {
+      return existingLock;
+    }
+
+    const generationPromise = this.generateAndCacheDiffTile(
+      sourceBranchId,
+      targetBranchId,
+      cacheKey,
+      z,
+      x,
+      y,
+    );
+
+    this.locks.set(cacheKey, generationPromise);
+
+    try {
+      return await generationPromise;
+    } finally {
+      this.locks.delete(cacheKey);
+    }
+  }
+
+  private async generateAndCacheDiffTile(
+    sourceBranchId: string,
+    targetBranchId: string,
+    cacheKey: string,
+    z: number,
+    x: number,
+    y: number,
+  ): Promise<Buffer> {
+    const tile = await this.mvtService.generateDiffTile(
+      sourceBranchId,
+      targetBranchId,
+      z,
+      x,
+      y,
+    );
+
+    try {
+      const ttl = Math.min(this.getCacheTTL(z), 300);
+      await this.cacheManager.set(cacheKey, tile, ttl * 1000);
+    } catch (error) {
+      this.logger.error(
+        `Cache write failed for diff tile ${cacheKey}: ${error.message}`,
+      );
+    }
+
+    return tile;
+  }
+
+  private async buildCacheKey(
+    branchId: string,
+    z: number,
+    x: number,
+    y: number,
+  ): Promise<string> {
+    const branch = await this.branchRepo.findOne({
+      where: { id: branchId },
+      select: ['id', 'headCommitId'],
+    });
+
+    if (!branch || !branch.headCommitId) {
+      return `mvt:v2:${branchId}:none:${z}:${x}:${y}`;
+    }
+
+    const commitHash = branch.headCommitId.substring(0, 8);
+
+    return `mvt:v2:${branchId}:${commitHash}:${z}:${x}:${y}`;
+  }
+
+  private getCacheTTL(zoom: number): number {
+    if (zoom < 6) {
+      return 86400; // 24 hours for low zoom
+    } else if (zoom < 9) {
+      return 3600; // 1 hour for medium zoom
+    } else if (zoom < 12) {
+      return 1800; // 30 minutes for high zoom
+    } else {
+      return 600; // 10 minutes for very high zoom
+    }
+  }
+
+  async invalidateBranchCache(branchId: string): Promise<number> {
+    this.logger.warn(
+      `Manual cache invalidation requested for branch: ${branchId}`,
+    );
+
+    try {
+      const store = (this.cacheManager as any).store;
+      const client = store.getClient();
+
+      const pattern = `mvt:v2:${branchId}:*`;
+      let deletedKeys = 0;
+      let cursor = '0';
+
+      do {
+        const [newCursor, keys] = await client.scan(
+          cursor,
+          'MATCH',
+          pattern,
+          'COUNT',
+          100,
+        );
+
+        cursor = newCursor;
+
+        if (keys.length > 0) {
+          await Promise.all(
+            keys.map((key: string) => this.cacheManager.del(key)),
+          );
+          deletedKeys += keys.length;
+        }
+      } while (cursor !== '0');
+
+      this.logger.warn(
+        `Invalidated ${deletedKeys} tiles for branch ${branchId}`,
+      );
+
+      return deletedKeys;
+    } catch (error) {
+      this.logger.error(`Failed to invalidate cache: ${error.message}`);
+      return 0;
+    }
+  }
+
+  getActiveLockCount(): number {
+    return this.locks.size;
+  }
+
+  async warmUpCache(
+    branchId: string,
+    bounds: [number, number, number, number],
+    zoomLevels: number[] = [5, 7, 9],
+  ): Promise<void> {
+    const [minLng, minLat, maxLng, maxLat] = bounds;
+
+    this.logger.log(`Warming up cache for branch ${branchId}`);
+
+    for (const z of zoomLevels) {
+      const tiles = this.getTilesInBounds(minLng, minLat, maxLng, maxLat, z);
+
+      this.logger.log(`Zoom ${z}: Pre-generating ${tiles.length} tiles`);
+
+      const BATCH_SIZE = 5; // Conservative to avoid overload
+      for (let i = 0; i < tiles.length; i += BATCH_SIZE) {
+        const batch = tiles.slice(i, i + BATCH_SIZE);
+        await Promise.all(
+          batch.map(([x, y]) => this.getBranchTile(branchId, z, x, y)),
+        );
+      }
+    }
+
+    this.logger.log(`Cache warm-up complete for branch ${branchId}`);
+  }
+
+  private getTilesInBounds(
+    minLng: number,
+    minLat: number,
+    maxLng: number,
+    maxLat: number,
+    zoom: number,
+  ): [number, number][] {
+    const tiles: [number, number][] = [];
+
+    const minX = this.lngToTileX(minLng, zoom);
+    const maxX = this.lngToTileX(maxLng, zoom);
+    const minY = this.latToTileY(maxLat, zoom);
+    const maxY = this.latToTileY(minLat, zoom);
+
+    const MAX_TILES = 100;
+    const rangeX = maxX - minX + 1;
+    const rangeY = maxY - minY + 1;
+
+    if (rangeX * rangeY > MAX_TILES) {
+      this.logger.warn(
+        `Tile range too large at zoom ${zoom}: ${rangeX}×${rangeY} > ${MAX_TILES}`,
+      );
+      return tiles;
+    }
+
+    for (let x = minX; x <= maxX; x++) {
+      for (let y = minY; y <= maxY; y++) {
+        tiles.push([x, y]);
+      }
+    }
+
+    return tiles;
+  }
+
+  private lngToTileX(lng: number, zoom: number): number {
+    return Math.floor(((lng + 180) / 360) * Math.pow(2, zoom));
+  }
+
+  private latToTileY(lat: number, zoom: number): number {
+    const latRad = (lat * Math.PI) / 180;
+    return Math.floor(
+      ((1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2) *
+        Math.pow(2, zoom),
+    );
+  }
+}
