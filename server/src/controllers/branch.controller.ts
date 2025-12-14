@@ -14,6 +14,7 @@ import { BranchService } from '../services/branch.service';
 import { GeoJsonService } from '../services/geojson.service';
 import { ShapefileService } from '../services/shapefile.service';
 import { MvtService } from '../services/mvt.service';
+import { TileCacheService } from '../services/tile-cache.service';
 import { DiffService } from '../services/diff.service';
 import { CreateBranchDto, ResolveBranchConflictsDto } from '../dto/branch.dto';
 import { JwtAuthGuard } from '../guards/jwt-auth.guard';
@@ -28,6 +29,7 @@ export class BranchController {
     private readonly geoJsonService: GeoJsonService,
     private readonly shapefileService: ShapefileService,
     private readonly mvtService: MvtService,
+    private readonly tileCacheService: TileCacheService,
     private readonly diffService: DiffService,
   ) {}
 
@@ -156,7 +158,7 @@ export class BranchController {
   ) {
     await this.branchService.findOne(branchId, user);
 
-    const tile = await this.mvtService.generateBranchTile(
+    const tile = await this.tileCacheService.getBranchTile(
       branchId,
       parseInt(z),
       parseInt(x),
@@ -212,7 +214,8 @@ export class BranchController {
       this.branchService.findOne(targetBranchId, user),
     ]);
 
-    const tile = await this.mvtService.generateDiffTile(
+    // Use cached tile service for better performance
+    const tile = await this.tileCacheService.getDiffTile(
       sourceBranchId,
       targetBranchId,
       parseInt(z),
