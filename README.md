@@ -55,7 +55,7 @@ A comprehensive spatial data version control system built with NestJS and Postgr
 
 Designed for **high scalability**, the system uses:
 - **PostgreSQL with PostGIS** for efficient spatial indexing and GIST spatial indexes
-- **Redis** for intelligent tile caching with circuit breaker protection
+- **Redis** for intelligent tile caching
 - **TypeORM** for database query optimization with prepared statements
 - **Pagination** supporting 500K+ features per dataset with 95% memory reduction
 - **Vector Tiles (MVT)** for efficient rendering (50KB tiles vs 10MB GeoJSON)
@@ -367,15 +367,6 @@ GET /api/branches/:id/mvt/:z/:x/:y - Get vector tiles for branch (cached, MVT fo
 GET /api/branches/:id/bounds - Get geographic bounds of branch features
 ```
 
-### Cache Management
-```
-GET /api/cache/metrics - Get cache performance metrics
-GET /api/cache/status - Get formatted cache status
-GET /api/cache/health - Get Redis health status with memory usage
-POST /api/cache/seed - Pre-generate tiles for a branch (background task)
-POST /api/cache/emergency-relief - Trigger emergency cache cleanup
-```
-
 ### Commits
 ```
 POST /api/commits - Create commit with features
@@ -492,7 +483,7 @@ Error responses:
 **Scalability Features:**
 - **Pagination**: Offset-based pagination for commits, features, and history (default 20 items/page, max 100)
 - **Bounding Box Filtering**: Load only features within map viewport
-- **Redis Caching**: Intelligent tile caching with health monitoring and circuit breaker
+- **Redis Caching**: Intelligent tile caching
 - **Connection Pooling**: TypeORM connection pooling for concurrent requests
 - **Prepared Statements**: Parameterized queries for security and performance
 - **Transaction Support**: ACID compliance for data integrity
@@ -583,12 +574,9 @@ Error responses:
     - Input validation with class-validator
   - [x] **Redis Tile Caching**
     - LRU eviction policy with 4GB memory limit
-    - Health monitoring with circuit breaker pattern
     - Graceful degradation under memory pressure
-    - Automatic emergency cache relief at 95% memory
     - TTL-based caching strategy (varies by zoom level)
     - Stampede prevention for concurrent requests
-    - Cache metrics and monitoring endpoints
   - [ ] Virtual scrolling for feature lists in UI
   - [ ] WebSocket for real-time collaboration updates
 
