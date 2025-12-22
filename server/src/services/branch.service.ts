@@ -173,15 +173,14 @@ export class BranchService {
 
     const query = `
       WITH source_features AS (
-        WITH RECURSIVE commit_chain AS (
-          SELECT id, parent_commit_id, created_at, 0 as depth
-          FROM commits
-          WHERE id = $1
-          UNION ALL
-          SELECT c.id, c.parent_commit_id, c.created_at, cc.depth + 1
-          FROM commits c
-          INNER JOIN commit_chain cc ON c.id = cc.parent_commit_id
-          WHERE cc.depth < 1000
+        WITH commit_chain AS (
+          SELECT
+            cc.ancestor_id as id,
+            c.created_at,
+            cc.depth
+          FROM commit_closure cc
+          INNER JOIN commits c ON cc.ancestor_id = c.id
+          WHERE cc.descendant_id = $1
         ),
         features_with_order AS (
           SELECT
@@ -198,15 +197,14 @@ export class BranchService {
         WHERE rn = 1 AND operation != '${FeatureOperation.DELETE}'
       ),
       target_features AS (
-        WITH RECURSIVE commit_chain AS (
-          SELECT id, parent_commit_id, created_at, 0 as depth
-          FROM commits
-          WHERE id = $2
-          UNION ALL
-          SELECT c.id, c.parent_commit_id, c.created_at, cc.depth + 1
-          FROM commits c
-          INNER JOIN commit_chain cc ON c.id = cc.parent_commit_id
-          WHERE cc.depth < 1000
+        WITH commit_chain AS (
+          SELECT
+            cc.ancestor_id as id,
+            c.created_at,
+            cc.depth
+          FROM commit_closure cc
+          INNER JOIN commits c ON cc.ancestor_id = c.id
+          WHERE cc.descendant_id = $2
         ),
         features_with_order AS (
           SELECT
@@ -485,17 +483,18 @@ export class BranchService {
 
   private async getCommitHistory(headCommitId: string): Promise<Commit[]> {
     const query = `
-      WITH RECURSIVE commit_chain AS (
-        SELECT id, branch_id, message, author_id, parent_commit_id, created_at, 0 as depth
-        FROM commits
-        WHERE id = $1
-
-        UNION ALL
-
-        SELECT c.id, c.branch_id, c.message, c.author_id, c.parent_commit_id, c.created_at, cc.depth + 1
-        FROM commits c
-        INNER JOIN commit_chain cc ON c.id = cc.parent_commit_id
-        WHERE cc.depth < 1000
+      WITH commit_chain AS (
+        SELECT
+          cc.ancestor_id as id,
+          c.branch_id,
+          c.message,
+          c.author_id,
+          c.parent_commit_id,
+          c.created_at,
+          cc.depth
+        FROM commit_closure cc
+        INNER JOIN commits c ON cc.ancestor_id = c.id
+        WHERE cc.descendant_id = $1
       )
       SELECT
         id,
