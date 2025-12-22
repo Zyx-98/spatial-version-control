@@ -335,30 +335,18 @@ export class CommitService {
     }
 
     const query = `
-      WITH RECURSIVE
+      WITH
       source_commit_chain AS (
-        SELECT id, parent_commit_id, created_at, 0 as depth
-        FROM commits
-        WHERE id = $1
-
-        UNION ALL
-
-        SELECT c.id, c.parent_commit_id, c.created_at, scc.depth + 1
-        FROM commits c
-        INNER JOIN source_commit_chain scc ON c.id = scc.parent_commit_id
-        WHERE scc.depth < 1000
+        SELECT cc.ancestor_id as id, c.created_at, cc.depth
+        FROM commit_closure cc
+        INNER JOIN commits c ON cc.ancestor_id = c.id
+        WHERE cc.descendant_id = $1
       ),
       target_commit_chain AS (
-        SELECT id, parent_commit_id, created_at, 0 as depth
-        FROM commits
-        WHERE id = $2
-
-        UNION ALL
-
-        SELECT c.id, c.parent_commit_id, c.created_at, tcc.depth + 1
-        FROM commits c
-        INNER JOIN target_commit_chain tcc ON c.id = tcc.parent_commit_id
-        WHERE tcc.depth < 1000
+        SELECT cc.ancestor_id as id, c.created_at, cc.depth
+        FROM commit_closure cc
+        INNER JOIN commits c ON cc.ancestor_id = c.id
+        WHERE cc.descendant_id = $2
       ),
       source_features AS (
         SELECT
