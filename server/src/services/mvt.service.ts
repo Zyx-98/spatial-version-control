@@ -12,17 +12,6 @@ export class MvtService {
     y: number,
     layerName: string = 'features',
   ): Promise<Buffer> {
-    const branchCheck = await this.dataSource.query(
-      `SELECT is_main FROM branches WHERE id = $1`,
-      [branchId],
-    );
-
-    const isMainBranch = branchCheck[0]?.is_main || false;
-
-    if (isMainBranch) {
-      return this.generateMainBranchTile(z, x, y, layerName);
-    }
-
     const simplificationTolerance = this.getSimplificationTolerance(z);
     const query = `
       WITH commit_chain AS (
@@ -105,100 +94,6 @@ export class MvtService {
     ]);
 
     return result[0]?.mvt || Buffer.alloc(0);
-  }
-
-  private async generateMainBranchTile(
-    z: number,
-    x: number,
-    y: number,
-    layerName: string = 'features',
-  ): Promise<Buffer> {
-    const geomColumn = this.getOptimizedGeometryColumn(z);
-
-    const areaColumn = this.getOptimizedAreaColumn(z);
-    const minAreaThreshold = this.getMinAreaThreshold(z);
-
-    const query = `
-      WITH mvt_features AS (
-        SELECT
-          feature_id,
-          geometry_type,
-          properties,
-          operation,
-          commit_id,
-          ST_AsMVTGeom(
-            ${geomColumn},
-            ST_TileEnvelope($1, $2, $3),
-            4096,
-            256,
-            true
-          ) AS geom
-        FROM main_branch_latest_features
-        WHERE ${geomColumn} IS NOT NULL
-          AND ST_Intersects(
-            ${geomColumn},
-            ST_TileEnvelope($1, $2, $3)
-          )
-          ${minAreaThreshold > 0 ? `AND (geometry_type = 'Point' OR ${areaColumn} >= ${minAreaThreshold})` : ''}
-      )
-      SELECT ST_AsMVT(mvt_features, $4, 4096, 'geom') as mvt
-      FROM mvt_features;
-    `;
-
-    const result = await this.dataSource.query(query, [z, x, y, layerName]);
-
-    return result[0]?.mvt || Buffer.alloc(0);
-  }
-
-  private getOptimizedGeometryColumn(zoom: number): string {
-    if (zoom < 6) {
-      return 'geom_3857_z0_5'; // Heavily simplified (tolerance: 100)
-    } else if (zoom < 9) {
-      return 'geom_3857_z6_8'; // Moderately simplified (tolerance: 10)
-    } else if (zoom < 12) {
-      return 'geom_3857_z9_11'; // Lightly simplified (tolerance: 1)
-    } else {
-      return 'geom_3857'; // Full detail (no simplification)
-    }
-  }
-
-  private getOptimizedAreaColumn(zoom: number): string {
-    if (zoom < 6) {
-      return 'area_3857_z0_5';
-    } else if (zoom < 9) {
-      return 'area_3857_z6_8';
-    } else if (zoom < 12) {
-      return 'area_3857_z9_11';
-    } else {
-      return 'area_3857';
-    }
-  }
-
-  private getMinAreaThreshold(zoom: number): number {
-    if (zoom < 6) {
-      // Zoom 0-5: Very large areas (countries/continents)
-      // Filter features smaller than 1 km² (1,000,000 m²)
-      return 1000000;
-    } else if (zoom === 6) {
-      // Zoom 6: Large areas (states/provinces)
-      // Filter features smaller than 0.5 km² (500,000 m²)
-      return 500000;
-    } else if (zoom === 7) {
-      // Zoom 7: Medium-large areas
-      // Filter features smaller than 0.2 km² (200,000 m²)
-      return 200000;
-    } else if (zoom === 8) {
-      // Zoom 8: Medium areas (cities)
-      // Filter features smaller than 0.05 km² (50,000 m²)
-      return 50000;
-    } else if (zoom === 9) {
-      // Zoom 9: Districts
-      // Filter features smaller than 0.01 km² (10,000 m²)
-      return 10000;
-    } else {
-      // Zoom 10+: Show all features
-      return 0;
-    }
   }
 
   private getSimplificationTolerance(zoom: number): number {
