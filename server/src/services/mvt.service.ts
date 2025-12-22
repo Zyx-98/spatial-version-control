@@ -25,18 +25,16 @@ export class MvtService {
 
     const simplificationTolerance = this.getSimplificationTolerance(z);
     const query = `
-      WITH RECURSIVE commit_chain AS (
-        SELECT c.id, c.parent_commit_id, c.created_at, 0 as depth
-        FROM commits c
-        JOIN branches b ON c.branch_id = b.id
+      WITH commit_chain AS (
+        SELECT
+          cc.ancestor_id as id,
+          c.created_at,
+          cc.depth
+        FROM branches b
+        INNER JOIN commit_closure cc ON b.head_commit_id = cc.descendant_id
+        INNER JOIN commits c ON cc.ancestor_id = c.id
         WHERE b.id = $1
-
-        UNION ALL
-
-        SELECT c.id, c.parent_commit_id, c.created_at, cc.depth + 1
-        FROM commits c
-        INNER JOIN commit_chain cc ON c.id = cc.parent_commit_id
-        WHERE cc.depth < 1000
+          AND b.head_commit_id IS NOT NULL
       ),
       features_with_order AS (
         SELECT
@@ -246,17 +244,16 @@ export class MvtService {
     }
 
     const query = `
-      WITH RECURSIVE commit_chain AS (
-        SELECT id, parent_commit_id, created_at, 0 as depth
-        FROM commits
-        WHERE branch_id = $1
-
-        UNION ALL
-
-        SELECT c.id, c.parent_commit_id, c.created_at, cc.depth + 1
-        FROM commits c
-        INNER JOIN commit_chain cc ON c.id = cc.parent_commit_id
-        WHERE cc.depth < 1000
+      WITH commit_chain AS (
+        SELECT
+          cc.ancestor_id as id,
+          c.created_at,
+          cc.depth
+        FROM branches b
+        INNER JOIN commit_closure cc ON b.head_commit_id = cc.descendant_id
+        INNER JOIN commits c ON cc.ancestor_id = c.id
+        WHERE b.id = $1
+          AND b.head_commit_id IS NOT NULL
       ),
       features_with_order AS (
         SELECT
@@ -375,30 +372,28 @@ export class MvtService {
     const tileBounds3857 = `ST_TileEnvelope($3, $4, $5)`;
 
     const query = `
-      WITH RECURSIVE
+      WITH
       source_commits AS (
-        SELECT id, parent_commit_id, 1 as depth
-        FROM commits
-        WHERE branch_id = $1
-
-        UNION ALL
-
-        SELECT c.id, c.parent_commit_id, sc.depth + 1
-        FROM commits c
-        INNER JOIN source_commits sc ON c.id = sc.parent_commit_id
-        WHERE sc.depth < 1000
+        SELECT
+          cc.ancestor_id as id,
+          c.created_at,
+          cc.depth
+        FROM branches b
+        INNER JOIN commit_closure cc ON b.head_commit_id = cc.descendant_id
+        INNER JOIN commits c ON cc.ancestor_id = c.id
+        WHERE b.id = $1
+          AND b.head_commit_id IS NOT NULL
       ),
       target_commits AS (
-        SELECT id, parent_commit_id, 1 as depth
-        FROM commits
-        WHERE branch_id = $2
-
-        UNION ALL
-
-        SELECT c.id, c.parent_commit_id, tc.depth + 1
-        FROM commits c
-        INNER JOIN target_commits tc ON c.id = tc.parent_commit_id
-        WHERE tc.depth < 1000
+        SELECT
+          cc.ancestor_id as id,
+          c.created_at,
+          cc.depth
+        FROM branches b
+        INNER JOIN commit_closure cc ON b.head_commit_id = cc.descendant_id
+        INNER JOIN commits c ON cc.ancestor_id = c.id
+        WHERE b.id = $2
+          AND b.head_commit_id IS NOT NULL
       ),
       source_features AS (
         SELECT
