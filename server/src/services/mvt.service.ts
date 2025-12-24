@@ -16,12 +16,11 @@ export class MvtService {
     const query = `
       WITH commit_chain AS (
         SELECT
-          cc.ancestor_id as id,
+          unnest(c.ancestor_ids) as id,
           c.created_at,
-          cc.depth
+          generate_series(0, array_length(c.ancestor_ids, 1) - 1) as depth
         FROM branches b
-        INNER JOIN commit_closure cc ON b.head_commit_id = cc.descendant_id
-        INNER JOIN commits c ON cc.ancestor_id = c.id
+        INNER JOIN commits c ON b.head_commit_id = c.id
         WHERE b.id = $1
           AND b.head_commit_id IS NOT NULL
       ),
@@ -141,12 +140,11 @@ export class MvtService {
     const query = `
       WITH commit_chain AS (
         SELECT
-          cc.ancestor_id as id,
+          unnest(c.ancestor_ids) as id,
           c.created_at,
-          cc.depth
+          generate_series(0, array_length(c.ancestor_ids, 1) - 1) as depth
         FROM branches b
-        INNER JOIN commit_closure cc ON b.head_commit_id = cc.descendant_id
-        INNER JOIN commits c ON cc.ancestor_id = c.id
+        INNER JOIN commits c ON b.head_commit_id = c.id
         WHERE b.id = $1
           AND b.head_commit_id IS NOT NULL
       ),
@@ -270,23 +268,21 @@ export class MvtService {
       WITH
       source_commits AS (
         SELECT
-          cc.ancestor_id as id,
+          unnest(c.ancestor_ids) as id,
           c.created_at,
-          cc.depth
+          generate_series(0, array_length(c.ancestor_ids, 1) - 1) as depth
         FROM branches b
-        INNER JOIN commit_closure cc ON b.head_commit_id = cc.descendant_id
-        INNER JOIN commits c ON cc.ancestor_id = c.id
+        INNER JOIN commits c ON b.head_commit_id = c.id
         WHERE b.id = $1
           AND b.head_commit_id IS NOT NULL
       ),
       target_commits AS (
         SELECT
-          cc.ancestor_id as id,
+          unnest(c.ancestor_ids) as id,
           c.created_at,
-          cc.depth
+          generate_series(0, array_length(c.ancestor_ids, 1) - 1) as depth
         FROM branches b
-        INNER JOIN commit_closure cc ON b.head_commit_id = cc.descendant_id
-        INNER JOIN commits c ON cc.ancestor_id = c.id
+        INNER JOIN commits c ON b.head_commit_id = c.id
         WHERE b.id = $2
           AND b.head_commit_id IS NOT NULL
       ),

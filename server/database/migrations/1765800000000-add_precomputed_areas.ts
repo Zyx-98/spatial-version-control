@@ -2,11 +2,9 @@ import { MigrationInterface, QueryRunner } from 'typeorm';
 
 export class AddPrecomputedAreas1765800000000 implements MigrationInterface {
   public async up(queryRunner: QueryRunner): Promise<void> {
-
     await queryRunner.query(`
       DROP MATERIALIZED VIEW IF EXISTS main_branch_latest_features;
     `);
-
 
     await queryRunner.query(`
       CREATE MATERIALIZED VIEW main_branch_latest_features AS
@@ -53,7 +51,6 @@ export class AddPrecomputedAreas1765800000000 implements MigrationInterface {
         AND ST_IsValid(sf.geom)
       ORDER BY sf.feature_id, lc.created_at DESC, sf.created_at DESC;
     `);
-
 
     await queryRunner.query(`
       CREATE UNIQUE INDEX idx_main_mv_feature_id
@@ -108,9 +105,6 @@ export class AddPrecomputedAreas1765800000000 implements MigrationInterface {
     `);
 
     await queryRunner.query(`ANALYZE main_branch_latest_features;`);
-
-      'Now area filtering will be fast (numeric comparison vs ST_Area calculation)',
-    );
   }
 
   public async down(queryRunner: QueryRunner): Promise<void> {

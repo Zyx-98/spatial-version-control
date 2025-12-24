@@ -337,16 +337,20 @@ export class CommitService {
     const query = `
       WITH
       source_commit_chain AS (
-        SELECT cc.ancestor_id as id, c.created_at, cc.depth
-        FROM commit_closure cc
-        INNER JOIN commits c ON cc.ancestor_id = c.id
-        WHERE cc.descendant_id = $1
+        SELECT
+          unnest(c.ancestor_ids) as id,
+          c.created_at,
+          generate_series(0, array_length(c.ancestor_ids, 1) - 1) as depth
+        FROM commits c
+        WHERE c.id = $1
       ),
       target_commit_chain AS (
-        SELECT cc.ancestor_id as id, c.created_at, cc.depth
-        FROM commit_closure cc
-        INNER JOIN commits c ON cc.ancestor_id = c.id
-        WHERE cc.descendant_id = $2
+        SELECT
+          unnest(c.ancestor_ids) as id,
+          c.created_at,
+          generate_series(0, array_length(c.ancestor_ids, 1) - 1) as depth
+        FROM commits c
+        WHERE c.id = $2
       ),
       source_features AS (
         SELECT
