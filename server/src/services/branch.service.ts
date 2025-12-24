@@ -175,12 +175,11 @@ export class BranchService {
       WITH source_features AS (
         WITH commit_chain AS (
           SELECT
-            cc.ancestor_id as id,
+            unnest(c.ancestor_ids) as id,
             c.created_at,
-            cc.depth
-          FROM commit_closure cc
-          INNER JOIN commits c ON cc.ancestor_id = c.id
-          WHERE cc.descendant_id = $1
+            generate_series(0, array_length(c.ancestor_ids, 1) - 1) as depth
+          FROM commits c
+          WHERE c.id = $1
         ),
         features_with_order AS (
           SELECT
@@ -199,12 +198,11 @@ export class BranchService {
       target_features AS (
         WITH commit_chain AS (
           SELECT
-            cc.ancestor_id as id,
+            unnest(c.ancestor_ids) as id,
             c.created_at,
-            cc.depth
-          FROM commit_closure cc
-          INNER JOIN commits c ON cc.ancestor_id = c.id
-          WHERE cc.descendant_id = $2
+            generate_series(0, array_length(c.ancestor_ids, 1) - 1) as depth
+          FROM commits c
+          WHERE c.id = $2
         ),
         features_with_order AS (
           SELECT
@@ -385,17 +383,13 @@ export class BranchService {
     }
 
     const query = `
-      WITH RECURSIVE commit_chain AS (
-        SELECT id, parent_commit_id, created_at, 0 as depth
-        FROM commits
-        WHERE id = $1
-
-        UNION ALL
-
-        SELECT c.id, c.parent_commit_id, c.created_at, cc.depth + 1
+      WITH commit_chain AS (
+        SELECT
+          unnest(c.ancestor_ids) as id,
+          c.created_at,
+          generate_series(0, array_length(c.ancestor_ids, 1) - 1) as depth
         FROM commits c
-        INNER JOIN commit_chain cc ON c.id = cc.parent_commit_id
-        WHERE cc.depth < 1000
+        WHERE c.id = $1
       ),
       features_with_order AS (
         SELECT
@@ -440,21 +434,18 @@ export class BranchService {
     let total = results.length;
     if (usePagination) {
       const countQuery = `
-        WITH RECURSIVE commit_chain AS (
-          SELECT id, parent_commit_id, created_at, 0 as depth
-          FROM commits
-          WHERE id = $1
-
-          UNION ALL
-
-          SELECT c.id, c.parent_commit_id, c.created_at, cc.depth + 1
+        WITH commit_chain AS (
+          SELECT
+            unnest(c.ancestor_ids) as id,
+            c.created_at,
+            generate_series(0, array_length(c.ancestor_ids, 1) - 1) as depth
           FROM commits c
-          INNER JOIN commit_chain cc ON c.id = cc.parent_commit_id
-          WHERE cc.depth < 1000
+          WHERE c.id = $1
         ),
         features_with_order AS (
           SELECT
             sf.feature_id,
+            sf.operation,
             ROW_NUMBER() OVER (
               PARTITION BY sf.feature_id
               ORDER BY cc.created_at DESC
@@ -466,11 +457,7 @@ export class BranchService {
         SELECT COUNT(*) as count
         FROM features_with_order
         WHERE rn = 1
-          AND NOT EXISTS (
-            SELECT 1 FROM features_with_order fwo2
-            WHERE fwo2.feature_id = features_with_order.feature_id
-              AND fwo2.rn = 1
-          );
+          AND operation != 'delete';
       `;
 
       const countParams = queryParams.slice(0, queryParams.length - 2);
@@ -485,26 +472,21 @@ export class BranchService {
     const query = `
       WITH commit_chain AS (
         SELECT
-          cc.ancestor_id as id,
-          c.branch_id,
-          c.message,
-          c.author_id,
-          c.parent_commit_id,
-          c.created_at,
-          cc.depth
-        FROM commit_closure cc
-        INNER JOIN commits c ON cc.ancestor_id = c.id
-        WHERE cc.descendant_id = $1
+          unnest(c.ancestor_ids) as id,
+          generate_series(0, array_length(c.ancestor_ids, 1) - 1) as depth
+        FROM commits c
+        WHERE c.id = $1
       )
       SELECT
-        id,
-        branch_id as "branchId",
-        message,
-        author_id as "authorId",
-        parent_commit_id as "parentCommitId",
-        created_at as "createdAt"
-      FROM commit_chain
-      ORDER BY created_at ASC;
+        c.id,
+        c.branch_id as "branchId",
+        c.message,
+        c.author_id as "authorId",
+        c.parent_commit_id as "parentCommitId",
+        c.created_at as "createdAt"
+      FROM commit_chain cc
+      INNER JOIN commits c ON cc.id = c.id
+      ORDER BY c.created_at ASC;
     `;
 
     const results = await this.dataSource.query(query, [headCommitId]);
