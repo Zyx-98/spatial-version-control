@@ -2,7 +2,6 @@ import { MigrationInterface, QueryRunner } from 'typeorm';
 
 export class OptimizeMvtPerformance1765600000000 implements MigrationInterface {
   public async up(queryRunner: QueryRunner): Promise<void> {
-
     await queryRunner.query(`
       DROP MATERIALIZED VIEW IF EXISTS main_branch_latest_features CASCADE;
     `);
@@ -50,7 +49,6 @@ export class OptimizeMvtPerformance1765600000000 implements MigrationInterface {
       ORDER BY sf.feature_id, lc.created_at DESC, sf.created_at DESC;
     `);
 
-
     await queryRunner.query(`
       CREATE UNIQUE INDEX idx_main_mv_feature_id
       ON main_branch_latest_features (feature_id);
@@ -85,7 +83,6 @@ export class OptimizeMvtPerformance1765600000000 implements MigrationInterface {
       ON main_branch_latest_features USING GIST (geom)
       WHERE geom IS NOT NULL;
     `);
-
 
     await queryRunner.query(`
       CREATE OR REPLACE FUNCTION refresh_main_branch_view()
@@ -123,7 +120,6 @@ export class OptimizeMvtPerformance1765600000000 implements MigrationInterface {
     await queryRunner.query(`ANALYZE spatial_features;`);
     await queryRunner.query(`ANALYZE commits;`);
     await queryRunner.query(`ANALYZE branches;`);
-
   }
 
   public async down(queryRunner: QueryRunner): Promise<void> {
