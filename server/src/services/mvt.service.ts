@@ -1,9 +1,15 @@
 import { Injectable } from '@nestjs/common';
-import { DataSource } from 'typeorm';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Branch } from 'src/entities';
+import { DataSource, Repository } from 'typeorm';
 
 @Injectable()
 export class MvtService {
-  constructor(private dataSource: DataSource) {}
+  constructor(
+    private dataSource: DataSource,
+    @InjectRepository(Branch)
+    private branchRepository: Repository<Branch>,
+  ) {}
 
   async generateBranchTile(
     branchId: string,
@@ -13,7 +19,42 @@ export class MvtService {
     layerName: string = 'features',
   ): Promise<Buffer> {
     const simplificationTolerance = this.getSimplificationTolerance(z);
-    const query = `
+
+    const branchCheck = await this.branchRepository.findOneOrFail({
+      where: { id: branchId },
+    });
+    const isMain = branchCheck.isMain;
+
+    const query = isMain
+      ? `
+      WITH mvt_features AS (
+        SELECT
+          feature_id,
+          geometry_type,
+          properties,
+          operation,
+          commit_id,
+          ST_AsMVTGeom(
+            CASE
+              WHEN $5 > 0 THEN ST_SimplifyPreserveTopology(geom_3857, $5)
+              ELSE geom_3857
+            END,
+            ST_TileEnvelope($1, $2, $3),
+            4096,
+            256,
+            true
+          ) AS geom
+        FROM main_branch_latest_features
+        WHERE geom_3857 IS NOT NULL
+          AND ST_Intersects(
+            geom_3857,
+            ST_TileEnvelope($1, $2, $3)
+          )
+      )
+      SELECT ST_AsMVT(mvt_features, $4, 4096, 'geom') as mvt
+      FROM mvt_features;
+    `
+      : `
       WITH commit_chain AS (
         SELECT
           unnest(c.ancestor_ids) as id,
@@ -83,14 +124,11 @@ export class MvtService {
       FROM mvt_features;
     `;
 
-    const result = await this.dataSource.query(query, [
-      branchId,
-      z,
-      x,
-      y,
-      layerName,
-      simplificationTolerance,
-    ]);
+    const params = isMain
+      ? [z, x, y, layerName, simplificationTolerance]
+      : [branchId, z, x, y, layerName, simplificationTolerance];
+
+    const result = await this.dataSource.query(query, params);
 
     return result[0]?.mvt || Buffer.alloc(0);
   }
@@ -137,7 +175,40 @@ export class MvtService {
       return Buffer.alloc(0);
     }
 
-    const query = `
+    const branchCheck = await this.dataSource.query(
+      'SELECT is_main FROM branches WHERE id = $1',
+      [branchId],
+    );
+    const isMainBranch = branchCheck[0]?.is_main;
+
+    const query = isMainBranch
+      ? `
+      WITH mvt_features AS (
+        SELECT
+          feature_id,
+          geometry_type,
+          properties,
+          operation,
+          commit_id,
+          ST_AsMVTGeom(
+            geom_3857,
+            ST_TileEnvelope($2, $3, $4),
+            4096,
+            256,
+            true
+          ) AS geom
+        FROM main_branch_latest_features
+        WHERE feature_id = ANY($1::uuid[])
+          AND geom_3857 IS NOT NULL
+          AND ST_Intersects(
+            geom_3857,
+            ST_TileEnvelope($2, $3, $4)
+          )
+      )
+      SELECT ST_AsMVT(mvt_features, $5, 4096, 'geom') as mvt
+      FROM mvt_features;
+    `
+      : `
       WITH commit_chain AS (
         SELECT
           unnest(c.ancestor_ids) as id,
@@ -204,14 +275,11 @@ export class MvtService {
       FROM mvt_features;
     `;
 
-    const result = await this.dataSource.query(query, [
-      branchId,
-      featureIds,
-      z,
-      x,
-      y,
-      layerName,
-    ]);
+    const params = isMainBranch
+      ? [featureIds, z, x, y, layerName]
+      : [branchId, featureIds, z, x, y, layerName];
+
+    const result = await this.dataSource.query(query, params);
 
     return result[0]?.mvt || Buffer.alloc(0);
   }
