@@ -47,6 +47,27 @@ export class Branch {
   @Column({ name: 'head_commit_id', nullable: true })
   headCommitId: string;
 
+  @Column({ name: 'min_lng', type: 'double precision', nullable: true })
+  minLng: number;
+
+  @Column({ name: 'min_lat', type: 'double precision', nullable: true })
+  minLat: number;
+
+  @Column({ name: 'max_lng', type: 'double precision', nullable: true })
+  maxLng: number;
+
+  @Column({ name: 'max_lat', type: 'double precision', nullable: true })
+  maxLat: number;
+
+  @Column({
+    name: 'bounds_geom',
+    type: 'geometry',
+    spatialFeatureType: 'Polygon',
+    srid: 4326,
+    nullable: true,
+  })
+  boundsGeom: string;
+
   @OneToMany(() => Commit, (commit) => commit.branch)
   commits: Commit[];
 

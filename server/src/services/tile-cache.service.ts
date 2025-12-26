@@ -24,21 +24,19 @@ export class TileCacheService {
     x: number,
     y: number,
   ): Promise<Buffer> {
-    const startTime = Date.now();
+    const isInBounds = await this.isTileInBranchBounds(branchId, z, x, y);
+    if (!isInBounds) {
+      return Buffer.alloc(0);
+    }
 
     const cacheKey = await this.buildCacheKey(branchId, z, x, y);
     const cachedTile = await this.cacheManager.get<Buffer>(cacheKey);
     if (cachedTile) {
-      const duration = Date.now() - startTime;
-      this.logger.log(`Cache HIT: ${cacheKey} (${duration}ms)`);
       return cachedTile;
     }
 
-    this.logger.log(`Cache MISS: ${cacheKey}`);
-
     const existingLock = this.locks.get(cacheKey);
     if (existingLock) {
-      this.logger.log(`Waiting for lock: ${cacheKey}`);
       return existingLock;
     }
 
@@ -237,7 +235,7 @@ export class TileCacheService {
 
       this.logger.log(`Zoom ${z}: Pre-generating ${tiles.length} tiles`);
 
-      const BATCH_SIZE = 5; // Conservative to avoid overload
+      const BATCH_SIZE = 5;
       for (let i = 0; i < tiles.length; i += BATCH_SIZE) {
         const batch = tiles.slice(i, i + BATCH_SIZE);
         await Promise.all(
@@ -247,6 +245,60 @@ export class TileCacheService {
     }
 
     this.logger.log(`Cache warm-up complete for branch ${branchId}`);
+  }
+
+  private async isTileInBranchBounds(
+    branchId: string,
+    z: number,
+    x: number,
+    y: number,
+  ): Promise<boolean> {
+    const branch = await this.branchRepo.findOne({
+      where: { id: branchId },
+      select: ['id', 'minLng', 'minLat', 'maxLng', 'maxLat'],
+    });
+
+    if (!branch) {
+      return false;
+    }
+
+    if (
+      branch.minLng === null ||
+      branch.minLat === null ||
+      branch.maxLng === null ||
+      branch.maxLat === null
+    ) {
+      return true;
+    }
+
+    const tileBounds = this.tileToBounds(x, y, z);
+
+    const intersects =
+      tileBounds.minLng <= branch.maxLng &&
+      tileBounds.maxLng >= branch.minLng &&
+      tileBounds.minLat <= branch.maxLat &&
+      tileBounds.maxLat >= branch.minLat;
+
+    return intersects;
+  }
+
+  private tileToBounds(
+    x: number,
+    y: number,
+    z: number,
+  ): { minLng: number; minLat: number; maxLng: number; maxLat: number } {
+    const n = Math.pow(2, z);
+
+    const minLng = (x / n) * 360 - 180;
+    const maxLng = ((x + 1) / n) * 360 - 180;
+
+    const minLatRad = Math.atan(Math.sinh(Math.PI * (1 - (2 * (y + 1)) / n)));
+    const maxLatRad = Math.atan(Math.sinh(Math.PI * (1 - (2 * y) / n)));
+
+    const minLat = (minLatRad * 180) / Math.PI;
+    const maxLat = (maxLatRad * 180) / Math.PI;
+
+    return { minLng, minLat, maxLng, maxLat };
   }
 
   private getTilesInBounds(

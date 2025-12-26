@@ -285,37 +285,17 @@ export class MvtService {
   }
 
   async getBranchBounds(branchId: string): Promise<number[] | null> {
-    const query = `
-      WITH latest_features AS (
-        SELECT DISTINCT ON (sf.feature_id)
-          sf.geom
-        FROM spatial_features sf
-        JOIN commits c ON sf.commit_id = c.id
-        WHERE c.branch_id = $1
-          AND sf.operation != 'delete'
-          AND sf.geom IS NOT NULL
-        ORDER BY sf.feature_id, c.created_at DESC, sf.created_at DESC
-      )
-      SELECT
-        ST_XMin(extent) as min_lng,
-        ST_YMin(extent) as min_lat,
-        ST_XMax(extent) as max_lng,
-        ST_YMax(extent) as max_lat
-      FROM (
-        SELECT ST_Extent(geom) as extent
-        FROM latest_features
-      ) bounds;
-    `;
+    const branch = await this.branchRepository.findOneOrFail({
+      where: { id: branchId },
+    });
 
-    const result = await this.dataSource.query(query, [branchId]);
-
-    if (result[0] && result[0].min_lng !== null) {
-      return [
-        result[0].min_lng,
-        result[0].min_lat,
-        result[0].max_lng,
-        result[0].max_lat,
-      ];
+    if (
+      branch.minLng !== null &&
+      branch.minLat !== null &&
+      branch.maxLng !== null &&
+      branch.maxLat !== null
+    ) {
+      return [branch.minLng, branch.minLat, branch.maxLng, branch.maxLat];
     }
 
     return null;
