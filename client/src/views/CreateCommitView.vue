@@ -4,7 +4,7 @@
       <div
         class="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600"
       ></div>
-      <p class="mt-4 text-gray-600">Loading current features...</p>
+      <p class="mt-4 text-gray-600">Loading branch...</p>
     </div>
 
     <div v-else>
@@ -670,21 +670,9 @@ const loadCurrentFeatures = async () => {
       return;
     }
 
-    const features = await spatialStore.fetchLatestFeatures(branchId);
-
-    originalFeatures.value = features.map((f) => ({
-      ...f,
-      featureId: f.featureId || uuidv4(),
-      geometryType: f.geometryType,
-      geometry: f.geometry,
-      properties: f.properties || {},
-      operation: f.operation,
-    }));
-
-    currentFeatures.value = JSON.parse(JSON.stringify(originalFeatures.value));
   } catch (error) {
     console.error("Failed to load features:", error);
-    alert("Failed to load current features");
+    alert("Failed to load branch permissions");
   } finally {
     loadingFeatures.value = false;
   }
