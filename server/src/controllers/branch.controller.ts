@@ -156,9 +156,15 @@ export class BranchController {
     @CurrentUser() user: User,
     @Res() res: Response,
   ) {
-    await this.branchService.findOne(branchId, user);
+    const branchExists = await this.branchService.checkBranchExists(
+      branchId,
+      user,
+    );
+    if (!branchExists) {
+      res.status(404).send('Branch not found');
+      return;
+    }
 
-    // Use cached tile service for better performance
     const tile = await this.tileCacheService.getBranchTile(
       branchId,
       parseInt(z),
