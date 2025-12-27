@@ -4,7 +4,7 @@
       <div
         class="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600"
       ></div>
-      <p class="mt-4 text-gray-600">Loading current features...</p>
+      <p class="mt-4 text-gray-600">Loading branch...</p>
     </div>
 
     <div v-else>
@@ -479,23 +479,30 @@
               @featureSelected="handleFeatureSelected"
               @geometryUpdated="handleGeometryUpdated"
               @toolChange="handleToolChange"
+              @mvtFeatureClicked="handleMvtFeatureClicked"
             />
             <div class="mt-4 p-4 bg-blue-50 rounded-md">
               <p class="text-sm font-semibold text-blue-900 mb-2">
                 💡 Instructions:
               </p>
               <ul class="text-xs text-blue-800 space-y-1.5">
-                <li>
-                  <strong>Add:</strong> Select Point/Line/Polygon and draw on
-                  map
+                <li v-if="currentTool !== 'select'" class="text-orange-700 font-semibold">
+                  ⚠️ To edit existing features, switch to "Select" mode above
                 </li>
                 <li>
-                  <strong>Edit Properties:</strong> Select feature → Edit in
-                  left panel
+                  <strong>View Existing:</strong> Gray features are existing data (read-only)
                 </li>
                 <li>
-                  <strong>Edit Geometry:</strong> Select feature → Click "Edit
-                  Geometry" → Drag markers
+                  <strong>Edit Existing:</strong> Use "Select" mode, then click any gray feature
+                </li>
+                <li>
+                  <strong>Add New:</strong> Select Point/Line/Polygon and draw on map
+                </li>
+                <li>
+                  <strong>Edit Properties:</strong> Select feature → Edit in left panel
+                </li>
+                <li>
+                  <strong>Edit Geometry:</strong> Select feature → Click "Edit Geometry" → Drag markers
                 </li>
                 <li>
                   <strong>Delete:</strong> Click trash icon in feature list
@@ -515,6 +522,7 @@ import { ref, computed, onMounted, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useSpatialStore } from "@/stores/spatial";
 import MapEditor from "@/components/MapEditor.vue";
+import api from "@/services/api";
 import {
   SpatialFeatureRequest,
   SpatialFeatureType,
@@ -548,6 +556,7 @@ const currentFeatures = ref<any[]>([]);
 const newFeatures = ref<any[]>([]);
 const deletedFeatureIds = ref<Set<string>>(new Set());
 const modifiedFeatureIds = ref<Set<string>>(new Set());
+const editingFeatureIds = ref<Set<string>>(new Set()); // Features loaded for editing but not yet modified
 
 // Properties editing
 const selectedFeature = ref<any | null>(null);
@@ -593,30 +602,38 @@ const deepEqual = (obj1: any, obj2: any): boolean => {
   return JSON.stringify(obj1) === JSON.stringify(obj2);
 };
 
+// All features being edited (new, modified, deleted, or loaded for editing)
+// MVT tiles will show unchanged existing features in the background
 const allFeatures = computed(() => {
   const features = [];
 
+  // Include features being edited, modified, or deleted
   for (const originalFeature of originalFeatures.value) {
     const featureId = originalFeature.featureId;
     const isDeleted = deletedFeatureIds.value.has(featureId);
     const isModified = modifiedFeatureIds.value.has(featureId);
+    const isEditing = editingFeatureIds.value.has(featureId);
 
-    let currentFeature = originalFeature;
-    if (isModified) {
-      const modified = currentFeatures.value.find(
-        (f) => f.featureId === featureId
-      );
-      if (modified) currentFeature = modified;
+    // Show in overlay if being edited, modified, or deleted
+    if (isEditing || isModified || isDeleted) {
+      let currentFeature = originalFeature;
+      if (isModified) {
+        const modified = currentFeatures.value.find(
+          (f) => f.featureId === featureId
+        );
+        if (modified) currentFeature = modified;
+      }
+
+      features.push({
+        ...currentFeature,
+        id: featureId,
+        operation: isDeleted ? "delete" : isModified ? "update" : "none",
+        isOriginal: true,
+      });
     }
-
-    features.push({
-      ...currentFeature,
-      id: featureId,
-      operation: isDeleted ? "delete" : isModified ? "update" : "none",
-      isOriginal: true,
-    });
   }
 
+  // Include new features
   for (const feature of newFeatures.value) {
     features.push({
       ...feature,
@@ -670,21 +687,9 @@ const loadCurrentFeatures = async () => {
       return;
     }
 
-    const features = await spatialStore.fetchLatestFeatures(branchId);
-
-    originalFeatures.value = features.map((f) => ({
-      ...f,
-      featureId: f.featureId || uuidv4(),
-      geometryType: f.geometryType,
-      geometry: f.geometry,
-      properties: f.properties || {},
-      operation: f.operation,
-    }));
-
-    currentFeatures.value = JSON.parse(JSON.stringify(originalFeatures.value));
   } catch (error) {
     console.error("Failed to load features:", error);
-    alert("Failed to load current features");
+    alert("Failed to load branch permissions");
   } finally {
     loadingFeatures.value = false;
   }
@@ -769,8 +774,13 @@ const handleGeometryUpdated = (index: number, newGeometry: any) => {
 
         if (hasGeometryChanged || hasPropertiesChanged) {
           modifiedFeatureIds.value.add(featureId);
+          editingFeatureIds.value.delete(featureId); // Move from editing to modified
         } else {
           modifiedFeatureIds.value.delete(featureId);
+          // If not modified, keep in editing state
+          if (!editingFeatureIds.value.has(featureId)) {
+            editingFeatureIds.value.add(featureId);
+          }
         }
       }
     }
@@ -842,8 +852,13 @@ const saveFeatureProperties = () => {
           // Only mark as modified if something actually changed
           if (hasGeometryChanged || hasPropertiesChanged) {
             modifiedFeatureIds.value.add(featureId);
+            editingFeatureIds.value.delete(featureId); // Move from editing to modified
           } else {
             modifiedFeatureIds.value.delete(featureId);
+            // If not modified, keep in editing state
+            if (!editingFeatureIds.value.has(featureId)) {
+              editingFeatureIds.value.add(featureId);
+            }
           }
         }
       }
@@ -929,6 +944,8 @@ const getOperationBadgeClass = (operation: string) => {
       return "bg-orange-100 text-orange-800";
     case "delete":
       return "bg-red-100 text-red-800";
+    case "none":
+      return "bg-blue-100 text-blue-800";
     default:
       return "bg-gray-100 text-gray-800";
   }
@@ -942,6 +959,8 @@ const getOperationLabel = (operation: string) => {
       return "MODIFIED";
     case "delete":
       return "DELETED";
+    case "none":
+      return "EDITING";
     default:
       return "UNCHANGED";
   }
@@ -1060,18 +1079,30 @@ const handleCommit = async () => {
 
   const features: SpatialFeatureRequest[] = [];
 
+  // Only include features that were actually modified (not just loaded for editing)
   for (const featureId of modifiedFeatureIds.value) {
-    const feature = currentFeatures.value.find(
+    const currentFeature = currentFeatures.value.find(
       (f) => f.featureId === featureId
     );
-    if (feature) {
-      features.push({
-        featureId: feature.featureId,
-        geometryType: feature.geometryType,
-        geometry: feature.geometry,
-        properties: feature.properties,
-        operation: FeatureOperation.UPDATE,
-      });
+    const originalFeature = originalFeatures.value.find(
+      (f) => f.featureId === featureId
+    );
+
+    if (currentFeature && originalFeature) {
+      // Check if actually modified
+      const wasModified =
+        !deepEqual(currentFeature.geometry, originalFeature.geometry) ||
+        !deepEqual(currentFeature.properties, originalFeature.properties);
+
+      if (wasModified) {
+        features.push({
+          featureId: currentFeature.featureId,
+          geometryType: currentFeature.geometryType,
+          geometry: currentFeature.geometry,
+          properties: currentFeature.properties,
+          operation: FeatureOperation.UPDATE,
+        });
+      }
     }
   }
 
@@ -1116,6 +1147,105 @@ const handleCommit = async () => {
     router.push(`/datasets/${datasetId}/branches/${branchId}`);
   } catch (error: any) {
     alert(error.response?.data?.message || "Failed to create commit");
+  }
+};
+
+const handleMvtFeatureClicked = async (featureId: string) => {
+  try {
+    console.log('MVT feature clicked:', featureId);
+
+    // Check if feature is already being edited
+    const alreadyEditing = originalFeatures.value.some(
+      (f) => f.featureId === featureId
+    );
+
+    if (alreadyEditing) {
+      console.log('Feature already in edit mode, selecting it');
+      const featureIndex = allFeatures.value.findIndex(f => f.id === featureId);
+      if (featureIndex !== -1) {
+        handleFeatureSelected(featureIndex);
+        if (mapEditorRef.value) {
+          mapEditorRef.value.selectFeatureByIndex(featureIndex);
+        }
+      }
+      return;
+    }
+
+    // Check if it's a new feature
+    const isNewFeature = newFeatures.value.some(
+      (f) => f.featureId === featureId
+    );
+
+    if (isNewFeature) {
+      console.log('This is a new feature, selecting it');
+      const featureIndex = allFeatures.value.findIndex(f => f.id === featureId);
+      if (featureIndex !== -1) {
+        handleFeatureSelected(featureIndex);
+        if (mapEditorRef.value) {
+          mapEditorRef.value.selectFeatureByIndex(featureIndex);
+        }
+      }
+      return;
+    }
+
+    console.log('Fetching feature history for:', featureId);
+
+    // Fetch the feature history to get the latest version with full geometry
+    const history = await api.getFeatureHistory(branchId, featureId);
+
+    console.log('Feature history received:', history);
+
+    if (!history || history.length === 0) {
+      console.warn('Feature history not found:', featureId);
+      return;
+    }
+
+    // Get the latest version (last in history)
+    const latestFeature = history[history.length - 1];
+
+    console.log('Latest feature:', latestFeature);
+
+    // Add to originalFeatures for tracking
+    const editableFeature = {
+      featureId: latestFeature.featureId || featureId,
+      geometryType: latestFeature.geometryType,
+      geometry: latestFeature.geometry,
+      properties: latestFeature.properties || {},
+      operation: latestFeature.operation,
+    };
+
+    originalFeatures.value.push(editableFeature);
+    currentFeatures.value.push(JSON.parse(JSON.stringify(editableFeature)));
+
+    // Mark as "editing" (not modified yet) so it appears in the overlay
+    // This will make it show up in the editable GeoJSON layer
+    editingFeatureIds.value.add(featureId);
+
+    console.log('Feature loaded for editing. Total original features:', originalFeatures.value.length);
+    console.log('Editing feature IDs:', Array.from(editingFeatureIds.value));
+    console.log('Modified feature IDs:', Array.from(modifiedFeatureIds.value));
+    console.log('All features for overlay:', allFeatures.value);
+
+    // Wait for next tick to ensure the feature is rendered in the overlay
+    await new Promise(resolve => setTimeout(resolve, 150));
+
+    // Automatically select the feature for editing
+    const featureIndex = allFeatures.value.findIndex(f => f.id === featureId);
+    if (featureIndex !== -1) {
+      // Update parent state
+      handleFeatureSelected(featureIndex);
+
+      // Also update MapEditor's internal state
+      if (mapEditorRef.value) {
+        mapEditorRef.value.selectFeatureByIndex(featureIndex);
+      }
+
+      console.log('Feature automatically selected at index:', featureIndex);
+    } else {
+      console.error('Could not find loaded feature in allFeatures array');
+    }
+  } catch (error: any) {
+    console.error('Failed to load feature for editing:', error);
   }
 };
 

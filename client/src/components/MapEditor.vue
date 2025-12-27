@@ -74,6 +74,7 @@ const emit = defineEmits<{
   featureSelected: [index: number];
   geometryUpdated: [index: number, newGeometry: any];
   toolChange: [tool: string];
+  mvtFeatureClicked: [featureId: string];
 }>();
 
 const mapId = ref(`map-editor-${Math.random().toString(36).substr(2, 9)}`);
@@ -214,12 +215,13 @@ const setupDrawingHandlers = () => {
 };
 
 const handleSelectClick = (e: maplibregl.MapMouseEvent) => {
-  const features = map!.queryRenderedFeatures(e.point, {
+  // First check editable features (GeoJSON overlay)
+  const editableFeatures = map!.queryRenderedFeatures(e.point, {
     layers: ["features-fill", "features-line", "features-point"],
   });
 
-  if (features && features.length > 0) {
-    const clickedFeature = features[0];
+  if (editableFeatures && editableFeatures.length > 0) {
+    const clickedFeature = editableFeatures[0];
     const featureIndex = props.features.findIndex(
       (f) => f.id === clickedFeature.properties?.featureId
     );
@@ -250,16 +252,72 @@ const handleSelectClick = (e: maplibregl.MapMouseEvent) => {
         .setLngLat(e.lngLat)
         .setHTML(popupContent)
         .addTo(map!);
+      return;
+    }
+  }
+
+  // If no editable feature clicked, check MVT features
+  if (mvtSourceId.value) {
+    const mvtFeatures = map!.queryRenderedFeatures(e.point, {
+      layers: [
+        `${mvtSourceId.value}-fill`,
+        `${mvtSourceId.value}-line`,
+        `${mvtSourceId.value}-point`,
+      ],
+    });
+
+    console.log('MVT features at click point:', mvtFeatures);
+
+    if (mvtFeatures && mvtFeatures.length > 0) {
+      const clickedMvtFeature = mvtFeatures[0];
+      const featureId = clickedMvtFeature.properties?.feature_id;
+
+      console.log('MVT feature clicked:', clickedMvtFeature.properties);
+      console.log('Feature ID:', featureId);
+
+      if (featureId) {
+        // Show popup for MVT feature
+        const geometryType = clickedMvtFeature.properties?.geometry_type || clickedMvtFeature.geometry.type;
+        const popupContent = `
+          <div class="p-2">
+            <p class="font-semibold">${geometryType}</p>
+            <p class="text-sm text-gray-600">Status: EXISTING</p>
+            <p class="text-xs text-gray-500 mt-1">ID: ${featureId.substring(0, 8)}...</p>
+            <p class="text-sm text-green-600 mt-2">⏳ Loading for editing...</p>
+          </div>
+        `;
+
+        if (currentPopup) {
+          currentPopup.remove();
+        }
+
+        currentPopup = new maplibregl.Popup()
+          .setLngLat(e.lngLat)
+          .setHTML(popupContent)
+          .addTo(map!);
+
+        // Emit event to parent to fetch and edit this feature
+        console.log('Emitting mvtFeatureClicked event with ID:', featureId);
+        emit("mvtFeatureClicked", featureId);
+        return;
+      } else {
+        console.warn('MVT feature has no feature_id property');
+      }
+    } else {
+      console.log('No MVT features found at click point');
     }
   } else {
-    selectedFeatureIndex = null;
-    editingFeature.value = null;
-    if (currentPopup) {
-      currentPopup.remove();
-      currentPopup = null;
-    }
-    renderPermanentFeatures();
+    console.log('No MVT source ID available');
   }
+
+  // No feature clicked - clear selection
+  selectedFeatureIndex = null;
+  editingFeature.value = null;
+  if (currentPopup) {
+    currentPopup.remove();
+    currentPopup = null;
+  }
+  renderPermanentFeatures();
 };
 
 const handleMapClick = (lnglat: [number, number]) => {
@@ -881,8 +939,18 @@ onBeforeUnmount(() => {
   }
 });
 
+const selectFeatureByIndex = (index: number) => {
+  if (index >= 0 && index < props.features.length) {
+    selectedFeatureIndex = index;
+    editingFeature.value = props.features[index];
+    renderPermanentFeatures();
+    console.log('Feature programmatically selected:', index);
+  }
+};
+
 defineExpose({
   clearDrawings,
+  selectFeatureByIndex,
 });
 </script>
 
