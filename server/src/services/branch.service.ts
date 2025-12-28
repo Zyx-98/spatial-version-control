@@ -109,8 +109,8 @@ export class BranchService {
     return branch;
   }
 
-  async checkBranchExists(id: string, user: User): Promise<boolean> {
-    const exists = await this.branchRepository.exists({
+  canAccessBranch(id: string, user: User): Promise<boolean> {
+    return this.branchRepository.exists({
       where: {
         id,
         dataset: {
@@ -118,7 +118,6 @@ export class BranchService {
         },
       },
     });
-    return exists;
   }
 
   async fetchMainBranch(
