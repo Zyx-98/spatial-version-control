@@ -156,11 +156,9 @@ export class BranchController {
     @CurrentUser() user: User,
     @Res() res: Response,
   ) {
-    const branchExists = await this.branchService.checkBranchExists(
-      branchId,
-      user,
-    );
-    if (!branchExists) {
+    const canAccess = await this.branchService.canAccessBranch(branchId, user);
+
+    if (!canAccess) {
       res.status(404).send('Branch not found');
       return;
     }
