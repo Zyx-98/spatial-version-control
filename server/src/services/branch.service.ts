@@ -184,59 +184,40 @@ export class BranchService {
     }
 
     const query = `
-      WITH source_features AS (
-        WITH commit_chain AS (
-          SELECT
-            unnest(c.ancestor_ids) as id,
-            c.created_at,
-            generate_series(0, array_length(c.ancestor_ids, 1) - 1) as depth
-          FROM commits c
-          WHERE c.id = $1
-        ),
-        features_with_order AS (
-          SELECT
-            sf.*,
-            cc.created_at as commit_created_at,
-            ROW_NUMBER() OVER (
-              PARTITION BY sf.feature_id
-              ORDER BY cc.created_at DESC
-            ) as rn
-          FROM spatial_features sf
-          INNER JOIN commit_chain cc ON sf.commit_id = cc.id
-        )
-        SELECT * FROM features_with_order
-        WHERE rn = 1 AND operation != '${FeatureOperation.DELETE}'
+      WITH source_commit_ids AS (
+        SELECT unnest(ancestor_ids) as id
+        FROM commits WHERE id = $1
+      ),
+      target_commit_ids AS (
+        SELECT unnest(ancestor_ids) as id
+        FROM commits WHERE id = $2
+      ),
+      source_features AS (
+        SELECT DISTINCT ON (sf.feature_id)
+          sf.*
+        FROM spatial_features sf
+        WHERE sf.commit_id IN (SELECT id FROM source_commit_ids)
+        ORDER BY sf.feature_id, sf.created_at DESC
       ),
       target_features AS (
-        WITH commit_chain AS (
-          SELECT
-            unnest(c.ancestor_ids) as id,
-            c.created_at,
-            generate_series(0, array_length(c.ancestor_ids, 1) - 1) as depth
-          FROM commits c
-          WHERE c.id = $2
-        ),
-        features_with_order AS (
-          SELECT
-            sf.*,
-            cc.created_at as commit_created_at,
-            ROW_NUMBER() OVER (
-              PARTITION BY sf.feature_id
-              ORDER BY cc.created_at DESC
-            ) as rn
-          FROM spatial_features sf
-          INNER JOIN commit_chain cc ON sf.commit_id = cc.id
-        )
-        SELECT * FROM features_with_order
-        WHERE rn = 1 AND operation != '${FeatureOperation.DELETE}'
+        SELECT DISTINCT ON (sf.feature_id)
+          sf.*
+        FROM spatial_features sf
+        WHERE sf.commit_id IN (SELECT id FROM target_commit_ids)
+        ORDER BY sf.feature_id, sf.created_at DESC
       )
       SELECT
         sf.feature_id as "featureId",
         'both_modified' as "conflictType"
       FROM source_features sf
       INNER JOIN target_features tf ON sf.feature_id = tf.feature_id
-      WHERE NOT ST_Equals(sf.geom, tf.geom)
-         OR sf.properties::text != tf.properties::text;
+      WHERE
+        sf.operation != '${FeatureOperation.DELETE}'
+        AND tf.operation != '${FeatureOperation.DELETE}'
+        AND (
+          NOT ST_Equals(sf.geom, tf.geom)
+          OR sf.properties::text != tf.properties::text
+        );
     `;
 
     const conflictIds = await this.dataSource.query(query, [
@@ -395,48 +376,28 @@ export class BranchService {
     }
 
     const query = `
-      WITH commit_chain AS (
-        SELECT
-          unnest(c.ancestor_ids) as id,
-          c.created_at,
-          generate_series(0, array_length(c.ancestor_ids, 1) - 1) as depth
-        FROM commits c
-        WHERE c.id = $1
+      WITH commit_ids AS (
+        SELECT unnest(ancestor_ids) as id
+        FROM commits
+        WHERE id = $1
       ),
-      features_with_order AS (
-        SELECT
+      latest_features AS (
+        SELECT DISTINCT ON (sf.feature_id)
           sf.id,
-          sf.feature_id,
-          sf.geometry_type,
+          sf.feature_id as "featureId",
+          sf.geometry_type as "geometryType",
           sf.geometry,
           sf.properties,
           sf.operation,
-          sf.commit_id,
-          sf.created_at,
-          cc.created_at as commit_created_at,
-          ROW_NUMBER() OVER (
-            PARTITION BY sf.feature_id
-            ORDER BY cc.created_at DESC
-          ) as rn
+          sf.commit_id as "commitId",
+          sf.created_at as "createdAt"
         FROM spatial_features sf
-        INNER JOIN commit_chain cc ON sf.commit_id = cc.id
-        ${bboxFilter}
-      ),
-      latest_features AS (
-        SELECT
-          id,
-          feature_id as "featureId",
-          geometry_type as "geometryType",
-          geometry,
-          properties,
-          operation,
-          commit_id as "commitId",
-          created_at as "createdAt"
-        FROM features_with_order
-        WHERE rn = 1
-          AND operation != '${FeatureOperation.DELETE}'
+        WHERE sf.commit_id IN (SELECT id FROM commit_ids)
+          ${bboxFilter}
+        ORDER BY sf.feature_id, sf.created_at DESC
       )
       SELECT * FROM latest_features
+      WHERE operation != '${FeatureOperation.DELETE}'
       ORDER BY "featureId"
       ${paginationClause};
     `;
@@ -446,30 +407,22 @@ export class BranchService {
     let total = results.length;
     if (usePagination) {
       const countQuery = `
-        WITH commit_chain AS (
-          SELECT
-            unnest(c.ancestor_ids) as id,
-            c.created_at,
-            generate_series(0, array_length(c.ancestor_ids, 1) - 1) as depth
-          FROM commits c
-          WHERE c.id = $1
+        WITH commit_ids AS (
+          SELECT unnest(ancestor_ids) as id
+          FROM commits
+          WHERE id = $1
         ),
-        features_with_order AS (
-          SELECT
-            sf.feature_id,
-            sf.operation,
-            ROW_NUMBER() OVER (
-              PARTITION BY sf.feature_id
-              ORDER BY cc.created_at DESC
-            ) as rn
+        latest_features AS (
+          SELECT DISTINCT ON (sf.feature_id)
+            sf.feature_id
           FROM spatial_features sf
-          INNER JOIN commit_chain cc ON sf.commit_id = cc.id
-          ${bboxFilter}
+          WHERE sf.commit_id IN (SELECT id FROM commit_ids)
+            ${bboxFilter}
+          ORDER BY sf.feature_id, sf.created_at DESC
         )
         SELECT COUNT(*) as count
-        FROM features_with_order
-        WHERE rn = 1
-          AND operation != 'delete';
+        FROM latest_features
+        WHERE operation != '${FeatureOperation.DELETE}';
       `;
 
       const countParams = queryParams.slice(0, queryParams.length - 2);
@@ -482,12 +435,10 @@ export class BranchService {
 
   private async getCommitHistory(headCommitId: string): Promise<Commit[]> {
     const query = `
-      WITH commit_chain AS (
-        SELECT
-          unnest(c.ancestor_ids) as id,
-          generate_series(0, array_length(c.ancestor_ids, 1) - 1) as depth
-        FROM commits c
-        WHERE c.id = $1
+      WITH commit_ids AS (
+        SELECT unnest(ancestor_ids) as id
+        FROM commits
+        WHERE id = $1
       )
       SELECT
         c.id,
@@ -496,8 +447,8 @@ export class BranchService {
         c.author_id as "authorId",
         c.parent_commit_id as "parentCommitId",
         c.created_at as "createdAt"
-      FROM commit_chain cc
-      INNER JOIN commits c ON cc.id = c.id
+      FROM commits c
+      WHERE c.id IN (SELECT id FROM commit_ids)
       ORDER BY c.created_at ASC;
     `;
 
