@@ -47,53 +47,80 @@ export class OptimizeClosureWithMaterializedPath1766300000000
     await queryRunner.query(`
       DO $$
       DECLARE
-        updated_count INTEGER;
-        iteration INTEGER := 0;
         total_commits INTEGER;
+        updated_count INTEGER;
+        orphaned_count INTEGER;
       BEGIN
         SELECT COUNT(*) INTO total_commits
         FROM commits
-        WHERE ancestor_ids = ARRAY[]::UUID[];
+        WHERE ancestor_ids = ARRAY[]::UUID[] OR ancestor_ids IS NULL;
 
-        RAISE NOTICE 'Backfilling % commits...', total_commits;
+        RAISE NOTICE 'Backfilling % commits using recursive CTE...', total_commits;
 
-        LOOP
-          iteration := iteration + 1;
+        WITH RECURSIVE commit_ancestry AS (
+          SELECT
+            id,
+            parent_commit_id,
+            ARRAY[id] as ancestor_ids,
+            0 as depth,
+            ARRAY[id::text] as path_check
+          FROM commits
+          WHERE parent_commit_id IS NULL
 
-          UPDATE commits c
+          UNION ALL
+
+          SELECT
+            c.id,
+            c.parent_commit_id,
+            ca.ancestor_ids || c.id,
+            ca.depth + 1,
+            ca.path_check || c.id::text
+          FROM commits c
+          INNER JOIN commit_ancestry ca ON c.parent_commit_id = ca.id
+          WHERE NOT (c.id::text = ANY(ca.path_check))
+            AND ca.depth < 1000000
+        )
+        UPDATE commits c
+        SET
+          ancestor_ids = ca.ancestor_ids,
+          depth = ca.depth
+        FROM commit_ancestry ca
+        WHERE c.id = ca.id;
+
+        GET DIAGNOSTICS updated_count = ROW_COUNT;
+
+        RAISE NOTICE 'Successfully updated % commits', updated_count;
+
+        SELECT COUNT(*) INTO orphaned_count
+        FROM commits c
+        WHERE (ancestor_ids = ARRAY[]::UUID[] OR ancestor_ids IS NULL)
+          AND c.parent_commit_id IS NOT NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM commits p WHERE p.id = c.parent_commit_id
+          );
+
+        IF orphaned_count > 0 THEN
+          RAISE WARNING '% orphaned commits found (parent does not exist)', orphaned_count;
+
+          UPDATE commits
           SET
-            ancestor_ids = CASE
-              WHEN c.parent_commit_id IS NULL THEN ARRAY[c.id]
-              ELSE p.ancestor_ids || c.id
-            END,
-            depth = CASE
-              WHEN c.parent_commit_id IS NULL THEN 0
-              ELSE p.depth + 1
-            END
-          FROM commits p
-          WHERE c.ancestor_ids = ARRAY[]::UUID[]
-            AND (
-              c.parent_commit_id IS NULL
-              OR (c.parent_commit_id = p.id AND p.ancestor_ids != ARRAY[]::UUID[])
+            ancestor_ids = ARRAY[id],
+            depth = 0
+          WHERE (ancestor_ids = ARRAY[]::UUID[] OR ancestor_ids IS NULL)
+            AND parent_commit_id IS NOT NULL
+            AND NOT EXISTS (
+              SELECT 1 FROM commits p WHERE p.id = parent_commit_id
             );
 
-          GET DIAGNOSTICS updated_count = ROW_COUNT;
-
-          RAISE NOTICE 'Iteration %: Updated % commits', iteration, updated_count;
-
-          EXIT WHEN updated_count = 0;
-
-          IF iteration > 1000000 THEN
-            RAISE EXCEPTION 'Backfill exceeded 1M iterations - possible cycle detected';
-          END IF;
-        END LOOP;
+          RAISE NOTICE 'Orphaned commits set as root commits';
+        END IF;
 
         SELECT COUNT(*) INTO updated_count
         FROM commits
-        WHERE ancestor_ids = ARRAY[]::UUID[];
+        WHERE ancestor_ids = ARRAY[]::UUID[] OR ancestor_ids IS NULL;
 
         IF updated_count > 0 THEN
-          RAISE WARNING '% commits still missing paths - may have cycles or orphaned commits', updated_count;
+          RAISE WARNING '% commits still missing paths - likely have circular references', updated_count;
         ELSE
           RAISE NOTICE 'Successfully backfilled all % commits!', total_commits;
         END IF;
