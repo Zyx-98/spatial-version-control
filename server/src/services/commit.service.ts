@@ -176,6 +176,7 @@ export class CommitService {
       where: { branchId },
       relations: {
         author: true,
+        features: true,
       },
       order: { createdAt: 'DESC' },
       take: limit,

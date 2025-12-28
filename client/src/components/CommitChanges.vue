@@ -42,27 +42,92 @@
         </div>
       </div>
 
+      <!-- View Mode Tabs -->
       <div class="mb-4">
-        <h4 class="text-md font-semibold mb-3">Changes Visualization</h4>
-        <MapViewer :features="allFeatures" :height="250" />
-        <div class="mt-2 flex justify-center space-x-6 text-xs">
-          <div class="flex items-center">
-            <span class="w-3 h-3 rounded-full bg-green-500 mr-2"></span>
-            Added
+        <div class="flex space-x-2 border-b border-gray-200">
+          <button
+            @click="viewMode = 'map'"
+            :class="[
+              'px-4 py-2 font-medium text-sm border-b-2 transition-colors',
+              viewMode === 'map'
+                ? 'border-primary-600 text-primary-600'
+                : 'border-transparent text-gray-500 hover:text-gray-700',
+            ]"
+          >
+            Map View
+          </button>
+          <button
+            @click="viewMode = 'list'"
+            :class="[
+              'px-4 py-2 font-medium text-sm border-b-2 transition-colors',
+              viewMode === 'list'
+                ? 'border-primary-600 text-primary-600'
+                : 'border-transparent text-gray-500 hover:text-gray-700',
+            ]"
+          >
+            List View
+          </button>
+        </div>
+      </div>
+
+      <!-- Map Comparison View -->
+      <div v-if="viewMode === 'map'" class="mb-4">
+        <div v-if="changes.updated.length > 0" class="mb-4">
+          <h4 class="text-md font-semibold mb-3">Before/After Comparison</h4>
+          <div class="grid grid-cols-2 gap-4">
+            <div>
+              <div class="text-sm font-medium text-gray-700 mb-2 text-center">
+                Before
+              </div>
+              <MapViewer :features="beforeFeatures" :height="300" />
+            </div>
+            <div>
+              <div class="text-sm font-medium text-gray-700 mb-2 text-center">
+                After (This Commit)
+              </div>
+              <MapViewer :features="afterFeatures" :height="300" />
+            </div>
           </div>
-          <div class="flex items-center">
-            <span class="w-3 h-3 rounded-full bg-blue-500 mr-2"></span>
-            Modified
+          <div class="mt-2 flex justify-center space-x-6 text-xs">
+            <div class="flex items-center">
+              <span class="w-3 h-3 rounded-full bg-gray-400 mr-2"></span>
+              Before
+            </div>
+            <div class="flex items-center">
+              <span class="w-3 h-3 rounded-full bg-green-500 mr-2"></span>
+              Added
+            </div>
+            <div class="flex items-center">
+              <span class="w-3 h-3 rounded-full bg-blue-500 mr-2"></span>
+              Modified
+            </div>
+            <div class="flex items-center">
+              <span class="w-3 h-3 rounded-full bg-red-500 mr-2"></span>
+              Deleted
+            </div>
           </div>
-          <div class="flex items-center">
-            <span class="w-3 h-3 rounded-full bg-red-500 mr-2"></span>
-            Deleted
+        </div>
+        <div v-else>
+          <h4 class="text-md font-semibold mb-3">All Changes</h4>
+          <MapViewer :features="allFeatures" :height="400" />
+          <div class="mt-2 flex justify-center space-x-6 text-xs">
+            <div class="flex items-center">
+              <span class="w-3 h-3 rounded-full bg-green-500 mr-2"></span>
+              Added
+            </div>
+            <div class="flex items-center">
+              <span class="w-3 h-3 rounded-full bg-red-500 mr-2"></span>
+              Deleted
+            </div>
           </div>
         </div>
       </div>
     </div>
 
-    <div class="px-4 pb-4 flex flex-col min-h-0 flex-1 overflow-hidden">
+    <div
+      v-if="viewMode === 'list'"
+      class="px-4 pb-4 flex flex-col min-h-0 flex-1 overflow-hidden"
+    >
       <div class="flex justify-between items-center mb-3 flex-shrink-0">
         <h4 class="text-md font-semibold">Feature Details</h4>
         <button
@@ -75,62 +140,62 @@
       </div>
 
       <div class="space-y-3 overflow-y-auto pr-2 flex-1">
-          <div
-            v-for="feature in filteredCreatedFeatures"
-            :key="'create-' + feature.id"
-            class="transition-all"
-          >
-            <FeatureDiff
-              :featureId="feature.featureId"
-              :geometryType="feature.geometryType"
-              operation="create"
-              :newGeometry="feature.geometry"
-              :newProperties="feature.properties"
-            />
-          </div>
-
-          <div
-            v-for="item in filteredUpdatedFeatures"
-            :key="'update-' + item.after.id"
-            class="transition-all"
-          >
-            <FeatureDiff
-              :featureId="item.after.featureId"
-              :geometryType="item.after.geometryType"
-              operation="update"
-              :oldGeometry="item.before?.geometry"
-              :oldProperties="item.before?.properties"
-              :newGeometry="item.after.geometry"
-              :newProperties="item.after.properties"
-            />
-          </div>
-
-          <!-- Deleted Features -->
-          <div
-            v-for="feature in filteredDeletedFeatures"
-            :key="'delete-' + feature.id"
-            class="transition-all"
-          >
-            <FeatureDiff
-              :featureId="feature.featureId"
-              :geometryType="feature.geometryType"
-              operation="delete"
-              :oldGeometry="feature.geometry"
-              :oldProperties="feature.properties"
-            />
-          </div>
-
-          <div
-            v-if="
-              filteredCreatedFeatures.length === 0 &&
-              filteredUpdatedFeatures.length === 0 &&
-              filteredDeletedFeatures.length === 0
-            "
-            class="text-center text-gray-500 py-4"
-          >
-            {{ filterBy === "all" ? "No changes" : `No ${filterBy} features` }}
-          </div>
+        <div
+          v-for="feature in filteredCreatedFeatures"
+          :key="'create-' + feature.id"
+          class="transition-all"
+        >
+          <FeatureDiff
+            :featureId="feature.featureId"
+            :geometryType="feature.geometryType"
+            operation="create"
+            :newGeometry="feature.geometry"
+            :newProperties="feature.properties"
+          />
         </div>
+
+        <div
+          v-for="item in filteredUpdatedFeatures"
+          :key="'update-' + item.after.id"
+          class="transition-all"
+        >
+          <FeatureDiff
+            :featureId="item.after.featureId"
+            :geometryType="item.after.geometryType"
+            operation="update"
+            :oldGeometry="item.before?.geometry"
+            :oldProperties="item.before?.properties"
+            :newGeometry="item.after.geometry"
+            :newProperties="item.after.properties"
+          />
+        </div>
+
+        <!-- Deleted Features -->
+        <div
+          v-for="feature in filteredDeletedFeatures"
+          :key="'delete-' + feature.id"
+          class="transition-all"
+        >
+          <FeatureDiff
+            :featureId="feature.featureId"
+            :geometryType="feature.geometryType"
+            operation="delete"
+            :oldGeometry="feature.geometry"
+            :oldProperties="feature.properties"
+          />
+        </div>
+
+        <div
+          v-if="
+            filteredCreatedFeatures.length === 0 &&
+            filteredUpdatedFeatures.length === 0 &&
+            filteredDeletedFeatures.length === 0
+          "
+          class="text-center text-gray-500 py-4"
+        >
+          {{ filterBy === "all" ? "No changes" : `No ${filterBy} features` }}
+        </div>
+      </div>
     </div>
   </div>
 </template>
@@ -150,6 +215,7 @@ interface Props {
 const props = defineProps<Props>();
 
 const filterBy = ref<"all" | "created" | "updated" | "deleted">("all");
+const viewMode = ref<"map" | "list">("map");
 
 const formatDate = (date: string) => {
   return format(new Date(date), "MMM dd, yyyy HH:mm");
@@ -178,9 +244,43 @@ const filteredDeletedFeatures = computed(() => {
 
 const allFeatures = computed(() => {
   return [
-    ...props.changes.created.map((f) => ({ ...f, operation: FeatureOperation.CREATE })),
-    ...props.changes.updated.map((item) => ({ ...item.after, operation: FeatureOperation.UPDATE })),
-    ...props.changes.deleted.map((f) => ({ ...f, operation: FeatureOperation.DELETE })),
+    ...props.changes.created.map((f) => ({
+      ...f,
+      operation: FeatureOperation.CREATE,
+    })),
+    ...props.changes.updated.map((item) => ({
+      ...item.after,
+      operation: FeatureOperation.UPDATE,
+    })),
+    ...props.changes.deleted.map((f) => ({
+      ...f,
+      operation: FeatureOperation.DELETE,
+    })),
   ];
+});
+
+const beforeFeatures = computed(() => {
+  return [
+    ...props.changes.updated
+      .filter((item) => item.before)
+      .map((item) => ({ ...item.before!, operation: FeatureOperation.UPDATE })),
+    ...props.changes.deleted.map((f) => ({
+      ...f,
+      operation: FeatureOperation.DELETE,
+    })),
+  ] as any[];
+});
+
+const afterFeatures = computed(() => {
+  return [
+    ...props.changes.created.map((f) => ({
+      ...f,
+      operation: FeatureOperation.CREATE,
+    })),
+    ...props.changes.updated.map((item) => ({
+      ...item.after,
+      operation: FeatureOperation.UPDATE,
+    })),
+  ] as any[];
 });
 </script>
