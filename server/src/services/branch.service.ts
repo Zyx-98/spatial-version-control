@@ -1,6 +1,9 @@
+import { CACHE_MANAGER } from '@nestjs/cache-manager';
+import { Cache } from 'cache-manager';
 import {
   BadRequestException,
   ConflictException,
+  Inject,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -22,6 +25,10 @@ import {
   UserRole,
 } from 'src/entities';
 import { DataSource, In, Repository } from 'typeorm';
+import {
+  LOCK_SERVICE,
+  LockService,
+} from 'src/interfaces/lock-service.interface';
 
 @Injectable()
 export class BranchService {
@@ -34,6 +41,8 @@ export class BranchService {
     private mergeRequestRepository: Repository<MergeRequest>,
     @InjectRepository(SpatialFeature)
     private spatialFeatureRepository: Repository<SpatialFeature>,
+    @Inject(CACHE_MANAGER) private cacheManager: Cache,
+    @Inject(LOCK_SERVICE) private lockService: LockService,
     private dataSource: DataSource,
   ) {}
 
@@ -109,15 +118,38 @@ export class BranchService {
     return branch;
   }
 
-  canAccessBranch(id: string, user: User): Promise<boolean> {
-    return this.branchRepository.exists({
-      where: {
-        id,
-        dataset: {
-          departmentId: user.departmentId,
-        },
+  async canAccessBranch(id: string, user: User): Promise<boolean> {
+    const cacheKey = `branch_access:${id}:${user.id}`;
+
+    const hasAccessInCache = await this.cacheManager.get<boolean>(cacheKey);
+
+    if (hasAccessInCache !== undefined) {
+      return hasAccessInCache;
+    }
+
+    return await this.lockService.withLock(
+      cacheKey,
+      async () => {
+        const cachedValue = await this.cacheManager.get<boolean>(cacheKey);
+        if (cachedValue !== undefined) {
+          return cachedValue;
+        }
+
+        const hasAccess = await this.branchRepository.exists({
+          where: {
+            id,
+            dataset: {
+              departmentId: user.departmentId,
+            },
+          },
+        });
+
+        await this.cacheManager.set(cacheKey, hasAccess, 2 * 60 * 60 * 1000); // 2 hours
+
+        return hasAccess;
       },
-    });
+      3000,
+    );
   }
 
   async fetchMainBranch(

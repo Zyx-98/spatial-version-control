@@ -5,17 +5,20 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Branch } from '../entities/branch.entity';
 import { MvtService } from './mvt.service';
+import {
+  LOCK_SERVICE,
+  LockService,
+} from '../interfaces/lock-service.interface';
 
 @Injectable()
 export class TileCacheService {
   private readonly logger = new Logger(TileCacheService.name);
 
-  private readonly locks = new Map<string, Promise<Buffer>>();
-
   constructor(
     @Inject(CACHE_MANAGER) private cacheManager: Cache,
     @InjectRepository(Branch) private branchRepo: Repository<Branch>,
     private mvtService: MvtService,
+    @Inject(LOCK_SERVICE) private lockService: LockService,
   ) {}
 
   async getBranchTile(
@@ -30,32 +33,24 @@ export class TileCacheService {
     }
 
     const cacheKey = await this.buildCacheKey(branchId, z, x, y);
+
     const cachedTile = await this.cacheManager.get<Buffer>(cacheKey);
     if (cachedTile) {
       return cachedTile;
     }
 
-    const existingLock = this.locks.get(cacheKey);
-    if (existingLock) {
-      return existingLock;
-    }
+    return await this.lockService.withLock(
+      `tile:${cacheKey}`,
+      async () => {
+        const cached = await this.cacheManager.get<Buffer>(cacheKey);
+        if (cached) {
+          return cached;
+        }
 
-    const generationPromise = this.generateAndCacheTile(
-      branchId,
-      cacheKey,
-      z,
-      x,
-      y,
+        return await this.generateAndCacheTile(branchId, cacheKey, z, x, y);
+      },
+      10000, // 10 second lock timeout
     );
-
-    this.locks.set(cacheKey, generationPromise);
-
-    try {
-      const tile = await generationPromise;
-      return tile;
-    } finally {
-      this.locks.delete(cacheKey);
-    }
   }
 
   private async generateAndCacheTile(
@@ -91,27 +86,25 @@ export class TileCacheService {
       return cachedTile;
     }
 
-    const existingLock = this.locks.get(cacheKey);
-    if (existingLock) {
-      return existingLock;
-    }
+    return await this.lockService.withLock(
+      `tile:${cacheKey}`,
+      async () => {
+        const cached = await this.cacheManager.get<Buffer>(cacheKey);
+        if (cached) {
+          return cached;
+        }
 
-    const generationPromise = this.generateAndCacheDiffTile(
-      sourceBranchId,
-      targetBranchId,
-      cacheKey,
-      z,
-      x,
-      y,
+        return await this.generateAndCacheDiffTile(
+          sourceBranchId,
+          targetBranchId,
+          cacheKey,
+          z,
+          x,
+          y,
+        );
+      },
+      10000, // 10 second lock timeout
     );
-
-    this.locks.set(cacheKey, generationPromise);
-
-    try {
-      return await generationPromise;
-    } finally {
-      this.locks.delete(cacheKey);
-    }
   }
 
   private async generateAndCacheDiffTile(
@@ -215,10 +208,6 @@ export class TileCacheService {
       this.logger.error(`Failed to invalidate cache: ${error.message}`);
       return 0;
     }
-  }
-
-  getActiveLockCount(): number {
-    return this.locks.size;
   }
 
   async warmUpCache(
