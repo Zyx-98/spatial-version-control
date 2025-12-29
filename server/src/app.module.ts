@@ -32,6 +32,9 @@ import { CommitController } from './controllers/commit.controller';
 import { MergeRequestController } from './controllers/merge-request.controller';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
+import { REDIS_CLIENT, RedisLockService } from './services/redis-lock.service';
+import { LOCK_SERVICE } from './interfaces/lock-service.interface';
+import Redis from 'ioredis';
 
 @Module({
   imports: [
@@ -131,6 +134,20 @@ import { JwtAuthGuard } from './guards/jwt-auth.guard';
     DiffService,
     JwtStrategy,
     JwtAuthGuard,
+    {
+      provide: REDIS_CLIENT,
+      useFactory: (configService: ConfigService): Redis => {
+        return new Redis({
+          host: configService.get<string>('REDIS_HOST'),
+          port: configService.get<number>('REDIS_PORT'),
+        });
+      },
+      inject: [ConfigService],
+    },
+    {
+      provide: LOCK_SERVICE,
+      useClass: RedisLockService,
+    },
   ],
 })
 export class AppModule {}
