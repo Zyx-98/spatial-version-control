@@ -7,18 +7,38 @@ export const REDIS_CLIENT = Symbol('REDIS_CLIENT');
 export class RedisLockService implements LockService {
   constructor(@Inject(REDIS_CLIENT) private readonly redisClient: Redis) {}
 
-  async acquireLock(key: string, ttl: number = 5000): Promise<string | null> {
+  private delay(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  async acquireLock(
+    key: string,
+    ttl: number = 5000,
+    retryAttempts: number = 0,
+    retryDelayMs: number = 100,
+  ): Promise<string | null> {
     const token = `${Date.now()}-${Math.random()}`;
+    let result: string | null = null;
 
-    const result = await this.redisClient.set(
-      `lock:${key}`,
-      token,
-      'PX',
-      ttl,
-      'NX',
-    );
+    for (let attempt = 0; attempt <= retryAttempts; attempt++) {
+      result = await this.redisClient.set(
+        `lock:${key}`,
+        token,
+        'PX',
+        ttl,
+        'NX',
+      );
 
-    return result === 'OK' ? token : null;
+      if (result === 'OK') {
+        return token;
+      }
+
+      if (attempt < retryAttempts) {
+        await this.delay(retryDelayMs);
+      }
+    }
+
+    return null;
   }
   async releaseLock(key: string, token: string): Promise<boolean> {
     const lockKey = `lock:${key}`;
@@ -40,7 +60,7 @@ export class RedisLockService implements LockService {
     fn: () => Promise<T>,
     ttl: number = 5000,
   ): Promise<T> {
-    const token = await this.acquireLock(key, ttl);
+    const token = await this.acquireLock(key, ttl, 3);
 
     if (!token) {
       throw new Error(`Failed to acquire lock: ${key}`);
