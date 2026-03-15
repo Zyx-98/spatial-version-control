@@ -265,26 +265,23 @@ export class CommitService {
 
     let previousStates: any[] = [];
 
-    if (updateFeatureIds.length > 0) {
+    if (updateFeatureIds.length > 0 && commit.parentCommitId) {
       const rawResults = await this.dataSource.query(
         `
+        WITH ancestor_ids AS (
+          SELECT unnest(ancestor_ids) as id
+          FROM commits WHERE id = $1
+        )
         SELECT DISTINCT ON (sf.feature_id)
           sf.id, sf.feature_id, sf.geometry_type, sf.geometry,
           sf.properties, sf.operation, sf.commit_id, sf.created_at
         FROM spatial_features sf
-        INNER JOIN commits c ON sf.commit_id = c.id
-        WHERE c.branch_id = $1
+        WHERE sf.commit_id IN (SELECT id FROM ancestor_ids)
           AND sf.feature_id = ANY($2)
-          AND c.created_at < $3
-          AND sf.operation != $4
-        ORDER BY sf.feature_id, c.created_at DESC
+          AND sf.operation != $3
+        ORDER BY sf.feature_id, sf.created_at DESC
         `,
-        [
-          commit.branchId,
-          updateFeatureIds,
-          commit.createdAt,
-          FeatureOperation.DELETE,
-        ],
+        [commit.parentCommitId, updateFeatureIds, FeatureOperation.DELETE],
       );
 
       previousStates = rawResults.map((row: any) => ({
@@ -355,24 +352,15 @@ export class CommitService {
 
     const query = `
       WITH
-      source_commit_chain AS (
-        SELECT
-          unnest(c.ancestor_ids) as id,
-          c.created_at,
-          generate_series(0, array_length(c.ancestor_ids, 1) - 1) as depth
-        FROM commits c
-        WHERE c.id = $1
+      source_only_commits AS (
+        SELECT unnest(s.ancestor_ids) as id
+        FROM commits s WHERE s.id = $1
+        EXCEPT
+        SELECT unnest(t.ancestor_ids) as id
+        FROM commits t WHERE t.id = $2
       ),
-      target_commit_chain AS (
-        SELECT
-          unnest(c.ancestor_ids) as id,
-          c.created_at,
-          generate_series(0, array_length(c.ancestor_ids, 1) - 1) as depth
-        FROM commits c
-        WHERE c.id = $2
-      ),
-      source_features AS (
-        SELECT
+      source_only_latest AS (
+        SELECT DISTINCT ON (sf.feature_id)
           sf.id,
           sf.feature_id,
           sf.geometry_type,
@@ -381,44 +369,33 @@ export class CommitService {
           sf.properties,
           sf.operation,
           sf.commit_id,
-          sf.created_at,
-          ROW_NUMBER() OVER (
-            PARTITION BY sf.feature_id
-            ORDER BY scc.created_at DESC
-          ) as rn
+          sf.created_at
         FROM spatial_features sf
-        INNER JOIN source_commit_chain scc ON sf.commit_id = scc.id
-        WHERE sf.operation != $3
-      ),
-      source_latest AS (
-        SELECT * FROM source_features WHERE rn = 1
-      ),
-      target_features AS (
-        SELECT
-          sf.id,
-          sf.feature_id,
-          sf.geometry_type,
-          sf.geometry,
-          sf.geom,
-          sf.properties,
-          sf.operation,
-          sf.commit_id,
-          sf.created_at,
-          ROW_NUMBER() OVER (
-            PARTITION BY sf.feature_id
-            ORDER BY tcc.created_at DESC
-          ) as rn
-        FROM spatial_features sf
-        INNER JOIN target_commit_chain tcc ON sf.commit_id = tcc.id
-        WHERE sf.operation != $3
+        WHERE sf.commit_id IN (SELECT id FROM source_only_commits)
+        ORDER BY sf.feature_id, sf.created_at DESC
       ),
       target_latest AS (
-        SELECT * FROM target_features WHERE rn = 1
+        SELECT DISTINCT ON (sf.feature_id)
+          sf.id,
+          sf.feature_id,
+          sf.geometry_type,
+          sf.geometry,
+          sf.geom,
+          sf.properties,
+          sf.operation,
+          sf.commit_id,
+          sf.created_at
+        FROM spatial_features sf
+        WHERE sf.commit_id IN (
+          SELECT unnest(ancestor_ids) FROM commits WHERE id = $2
+        )
+        AND sf.operation != $3
+        ORDER BY sf.feature_id, sf.created_at DESC
       )
       SELECT
-        COALESCE(s.feature_id, t.feature_id) as feature_id,
+        s.feature_id,
         CASE
-          WHEN s.feature_id IS NULL THEN 'deleted'
+          WHEN s.operation = $3 THEN 'deleted'
           WHEN t.feature_id IS NULL THEN 'added'
           WHEN NOT ST_Equals(s.geom, t.geom) OR s.properties::text != t.properties::text THEN 'modified'
           ELSE 'unchanged'
@@ -437,8 +414,8 @@ export class CommitService {
         t.operation as target_operation,
         t.commit_id as target_commit_id,
         t.created_at as target_created_at
-      FROM source_latest s
-      FULL OUTER JOIN target_latest t ON s.feature_id = t.feature_id
+      FROM source_only_latest s
+      LEFT JOIN target_latest t ON s.feature_id = t.feature_id
     `;
 
     const results = await this.dataSource.query(query, [

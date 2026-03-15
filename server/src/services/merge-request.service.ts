@@ -249,8 +249,45 @@ export class MergeRequestService {
         );
       }
 
-      const { features: sourceFeatures } =
-        await this.branchService.getLatestFeatures(sourceBranch.id);
+      const sourceOnlyFeatures = await this.dataSource.query(
+        `
+        WITH source_only_commits AS (
+          SELECT unnest(s.ancestor_ids) as id
+          FROM commits s WHERE s.id = $1
+          EXCEPT
+          SELECT unnest(t.ancestor_ids) as id
+          FROM commits t WHERE t.id = $2
+        ),
+        source_only_features AS (
+          SELECT DISTINCT ON (sf.feature_id)
+            sf.feature_id as "featureId",
+            sf.geometry_type as "geometryType",
+            sf.geometry,
+            sf.properties,
+            sf.operation,
+            sf.commit_id as "commitId"
+          FROM spatial_features sf
+          WHERE sf.commit_id IN (SELECT id FROM source_only_commits)
+          ORDER BY sf.feature_id, sf.created_at DESC
+        ),
+        main_latest AS (
+          SELECT DISTINCT ON (sf.feature_id)
+            sf.feature_id,
+            sf.operation as main_operation
+          FROM spatial_features sf
+          WHERE sf.commit_id IN (
+            SELECT unnest(ancestor_ids) FROM commits WHERE id = $2
+          )
+          ORDER BY sf.feature_id, sf.created_at DESC
+        )
+        SELECT sof.*
+        FROM source_only_features sof
+        LEFT JOIN main_latest ml ON sof."featureId" = ml.feature_id
+        WHERE sof.operation != 'delete'
+           OR (ml.main_operation IS NOT NULL AND ml.main_operation != 'delete')
+        `,
+        [sourceBranch.headCommitId, lockedTargetBranch.headCommitId],
+      );
 
       const resolutionMap = new Map<string, string>(
         ((mergeRequest.conflicts || []) as any[])
@@ -258,11 +295,12 @@ export class MergeRequestService {
           .map((c) => [c.featureId, c.resolution]),
       );
 
-      const featuresToWrite = sourceFeatures.filter((feature) => {
-        const resolution = resolutionMap.get(feature.featureId);
-        if (resolution === 'use_main') return false;
-        return true;
-      });
+      const featuresToWrite = (sourceOnlyFeatures as any[]).filter(
+        (feature) => {
+          const resolution = resolutionMap.get(feature.featureId);
+          return resolution !== 'use_main';
+        },
+      );
 
       const mergeCommit = queryRunner.manager.create(Commit, {
         message: `Merge branch '${sourceBranch.name}' into '${targetBranch.name}'`,
@@ -278,7 +316,7 @@ export class MergeRequestService {
           featureId: feature.featureId,
           geometryType: feature.geometryType,
           geometry: feature.geometry,
-          geom: feature.geom,
+          geom: feature.geometry,
           properties: feature.properties,
           operation: feature.operation,
           commitId: savedMergeCommit.id,
