@@ -76,6 +76,7 @@ export class BranchService {
       datasetId,
       createdById: user.id,
       headCommitId: mainBranch.headCommitId,
+      forkCommitId: mainBranch.headCommitId,
     });
 
     return await this.branchRepository.save(branch);
@@ -163,10 +164,7 @@ export class BranchService {
     }
 
     const mainBranch = await this.branchRepository.findOne({
-      where: {
-        datasetId: branch.datasetId,
-        isMain: true,
-      },
+      where: { datasetId: branch.datasetId, isMain: true },
     });
 
     if (!mainBranch) {
@@ -174,25 +172,13 @@ export class BranchService {
     }
 
     if (!mainBranch.headCommitId) {
-      return { hasConflicts: false, conflicts: [], message: 'fast-forward' };
+      return { hasConflicts: false, conflicts: [] };
     }
 
-    if (mainBranch.headCommitId === branch.headCommitId) {
-      return { hasConflicts: false, conflicts: [], message: 'fast-forward' };
-    }
+    const forkCommitId = branch.forkCommitId || branch.headCommitId;
 
-    const forkResult = await this.dataSource.query(
-      `SELECT find_common_ancestor($1, $2) as fork_id`,
-      [branch.headCommitId, mainBranch.headCommitId],
-    );
-    const forkCommitId: string | null = forkResult[0]?.fork_id || null;
-
-    if (!forkCommitId) {
-      return { hasConflicts: false, conflicts: [], message: 'fast-forward' };
-    }
-
-    if (forkCommitId === mainBranch.headCommitId) {
-      return { hasConflicts: false, conflicts: [], message: 'fast-forward' };
+    if (mainBranch.headCommitId === forkCommitId) {
+      return { hasConflicts: false, conflicts: [] };
     }
 
     const branchHasOwnCommits = branch.headCommitId !== forkCommitId;
@@ -200,67 +186,91 @@ export class BranchService {
     if (!branchHasOwnCommits) {
       await this.branchRepository.update(branchId, {
         headCommitId: mainBranch.headCommitId,
+        forkCommitId: mainBranch.headCommitId,
         hasUnresolvedConflicts: false,
       });
 
-      return { hasConflicts: false, conflicts: [], message: 'fast-forward' };
+      return { hasConflicts: false, conflicts: [] };
+    }
+
+    const conflicts = await this.detectConflictsAfterFork(
+      branch,
+      mainBranch,
+      forkCommitId,
+    );
+
+    if (conflicts.length === 0) {
+      await this.createFetchMergeCommit(branch, mainBranch, forkCommitId, user);
+      return { hasConflicts: false, conflicts: [] };
+    }
+
+    await this.branchRepository.update(branchId, {
+      hasUnresolvedConflicts: true,
+    });
+
+    return { hasConflicts: true, conflicts };
+  }
+
+  private async detectConflictsAfterFork(
+    sourceBranch: Branch,
+    targetBranch: Branch,
+    forkCommitId: string,
+  ): Promise<ConflictDetail[]> {
+    if (!sourceBranch.headCommitId || !targetBranch.headCommitId) {
+      return [];
     }
 
     const conflictIds = await this.dataSource.query(
       `
       WITH
-      branch_only_commits AS (
-        SELECT unnest(b.ancestor_ids) as id
-        FROM commits b WHERE b.id = $1
+      source_only_commits AS (
+        SELECT unnest(s.ancestor_ids) as id
+        FROM commits s WHERE s.id = $1
         EXCEPT
         SELECT unnest(f.ancestor_ids) as id
         FROM commits f WHERE f.id = $3
       ),
-      main_only_commits AS (
-        SELECT unnest(m.ancestor_ids) as id
-        FROM commits m WHERE m.id = $2
+      target_only_commits AS (
+        SELECT unnest(t.ancestor_ids) as id
+        FROM commits t WHERE t.id = $2
         EXCEPT
         SELECT unnest(f.ancestor_ids) as id
         FROM commits f WHERE f.id = $3
       ),
-      branch_features AS (
+      source_features AS (
         SELECT DISTINCT ON (sf.feature_id) sf.*
         FROM spatial_features sf
-        WHERE sf.commit_id IN (SELECT id FROM branch_only_commits)
+        WHERE sf.commit_id IN (SELECT id FROM source_only_commits)
         ORDER BY sf.feature_id, sf.created_at DESC
       ),
-      main_features AS (
+      target_features AS (
         SELECT DISTINCT ON (sf.feature_id) sf.*
         FROM spatial_features sf
-        WHERE sf.commit_id IN (SELECT id FROM main_only_commits)
+        WHERE sf.commit_id IN (SELECT id FROM target_only_commits)
         ORDER BY sf.feature_id, sf.created_at DESC
       )
       SELECT
-        bf.feature_id as "featureId",
+        sf.feature_id as "featureId",
         'both_modified' as "conflictType"
-      FROM branch_features bf
-      INNER JOIN main_features mf ON bf.feature_id = mf.feature_id
-      WHERE bf.operation != '${FeatureOperation.DELETE}'
-        AND mf.operation != '${FeatureOperation.DELETE}'
+      FROM source_features sf
+      INNER JOIN target_features tf ON sf.feature_id = tf.feature_id
+      WHERE sf.operation != '${FeatureOperation.DELETE}'
+        AND tf.operation != '${FeatureOperation.DELETE}'
         AND (
-          NOT ST_Equals(bf.geom, mf.geom)
-          OR bf.properties::text != mf.properties::text
+          NOT ST_Equals(sf.geom, tf.geom)
+          OR sf.properties::text != tf.properties::text
         )
     `,
-      [branch.headCommitId, mainBranch.headCommitId, forkCommitId],
+      [sourceBranch.headCommitId, targetBranch.headCommitId, forkCommitId],
     );
 
-    if (conflictIds.length === 0) {
-      await this.createFetchMergeCommit(branch, mainBranch, forkCommitId, user);
-      return { hasConflicts: false, conflicts: [], message: 'auto-merged' };
-    }
+    if (conflictIds.length === 0) return [];
 
     const featureIds = conflictIds.map((c: any) => c.featureId);
 
-    const [branchSnap, mainSnap, ancestorFeatures] = await Promise.all([
-      this.getLatestFeatures(branch.id),
-      this.getLatestFeatures(mainBranch.id),
-      // Get state of each conflicted feature as it was at the fork point.
+    const [sourceResult, targetResult, ancestorFeatures] = await Promise.all([
+      this.getLatestFeatures(sourceBranch.id),
+      this.getLatestFeatures(targetBranch.id),
       this.dataSource.query(
         `
         SELECT DISTINCT ON (sf.feature_id)
@@ -280,25 +290,23 @@ export class BranchService {
       ),
     ]);
 
-    const branchMap = new Map(branchSnap.features.map((f) => [f.featureId, f]));
-    const mainMap = new Map(mainSnap.features.map((f) => [f.featureId, f]));
+    const sourceMap = new Map(
+      sourceResult.features.map((f) => [f.featureId, f]),
+    );
+    const targetMap = new Map(
+      targetResult.features.map((f) => [f.featureId, f]),
+    );
     const ancestorMap = new Map(
       ancestorFeatures.map((f: any) => [f.featureId, f]),
     );
 
-    const conflicts: ConflictDetail[] = conflictIds.map((c: any) => ({
+    return conflictIds.map((c: any) => ({
       featureId: c.featureId,
-      branchVersion: branchMap.get(c.featureId) || null,
-      mainVersion: mainMap.get(c.featureId) || null,
+      branchVersion: sourceMap.get(c.featureId) || null,
+      mainVersion: targetMap.get(c.featureId) || null,
       ancestorVersion: ancestorMap.get(c.featureId) || null,
       conflictType: 'both_modified' as const,
     }));
-
-    await this.branchRepository.update(branchId, {
-      hasUnresolvedConflicts: true,
-    });
-
-    return { hasConflicts: true, conflicts };
   }
 
   private async createFetchMergeCommit(
@@ -317,14 +325,12 @@ export class BranchService {
         FROM commits f WHERE f.id = $2
       )
       SELECT DISTINCT ON (sf.feature_id)
-        sf.id,
         sf.feature_id,
         sf.geometry_type,
         sf.geometry,
         sf.geom,
         sf.properties,
         sf.operation,
-        sf.commit_id,
         sf.created_at
       FROM spatial_features sf
       WHERE sf.commit_id IN (SELECT id FROM main_only_commits)
@@ -335,7 +341,7 @@ export class BranchService {
 
     if (mainNewFeatures.length === 0) {
       await this.branchRepository.update(branch.id, {
-        headCommitId: mainBranch.headCommitId,
+        forkCommitId: mainBranch.headCommitId,
         hasUnresolvedConflicts: false,
       });
       return;
@@ -380,6 +386,7 @@ export class BranchService {
 
       await queryRunner.manager.update(Branch, branch.id, {
         headCommitId: savedCommit.id,
+        forkCommitId: mainBranch.headCommitId,
         hasUnresolvedConflicts: false,
       });
 
@@ -400,95 +407,157 @@ export class BranchService {
       return [];
     }
 
-    const query = `
-      WITH source_commit_ids AS (
-        SELECT unnest(ancestor_ids) as id
-        FROM commits WHERE id = $1
+    const conflictQuery = `
+      WITH fork AS (
+        SELECT find_common_ancestor($1, $2) AS fork_id
       ),
-      target_commit_ids AS (
-        SELECT unnest(ancestor_ids) as id
+      source_delta AS (
+        SELECT unnest(ancestor_ids) AS id
+        FROM commits WHERE id = $1
+        EXCEPT
+        SELECT unnest(ancestor_ids) AS id
+        FROM commits WHERE id = (SELECT fork_id FROM fork)
+      ),
+      target_delta AS (
+        SELECT unnest(ancestor_ids) AS id
         FROM commits WHERE id = $2
+        EXCEPT
+        SELECT unnest(ancestor_ids) AS id
+        FROM commits WHERE id = (SELECT fork_id FROM fork)
       ),
       source_features AS (
         SELECT DISTINCT ON (sf.feature_id)
-          sf.*
+          sf.feature_id, sf.operation, sf.geom, sf.properties
         FROM spatial_features sf
-        WHERE sf.commit_id IN (SELECT id FROM source_commit_ids)
+        WHERE sf.commit_id IN (SELECT id FROM source_delta)
         ORDER BY sf.feature_id, sf.created_at DESC
       ),
       target_features AS (
         SELECT DISTINCT ON (sf.feature_id)
-          sf.*
+          sf.feature_id, sf.operation, sf.geom, sf.properties
         FROM spatial_features sf
-        WHERE sf.commit_id IN (SELECT id FROM target_commit_ids)
+        WHERE sf.commit_id IN (SELECT id FROM target_delta)
         ORDER BY sf.feature_id, sf.created_at DESC
       )
       SELECT
-        sf.feature_id as "featureId",
-        'both_modified' as "conflictType"
+        sf.feature_id AS "featureId",
+        (SELECT fork_id FROM fork) AS "forkCommitId"
       FROM source_features sf
       INNER JOIN target_features tf ON sf.feature_id = tf.feature_id
-      WHERE
-        sf.operation != '${FeatureOperation.DELETE}'
+      WHERE sf.operation != '${FeatureOperation.DELETE}'
         AND tf.operation != '${FeatureOperation.DELETE}'
         AND (
-          NOT ST_Equals(sf.geom, tf.geom)
-          OR sf.properties::text != tf.properties::text
-        );
+          sf.properties::text != tf.properties::text
+          OR NOT ST_Equals(sf.geom, tf.geom)
+        )
     `;
 
-    const conflictIds = await this.dataSource.query(query, [
+    const conflictRows = await this.dataSource.query(conflictQuery, [
       sourceBranch.headCommitId,
       targetBranch.headCommitId,
     ]);
 
-    const conflicts: ConflictDetail[] = [];
+    if (conflictRows.length === 0) return [];
 
-    if (conflictIds.length > 0) {
-      const { features: sourceFeatures } = await this.getLatestFeatures(
-        sourceBranch.id,
-      );
-      const { features: targetFeatures } = await this.getLatestFeatures(
-        targetBranch.id,
-      );
+    const featureIds: string[] = conflictRows.map((r: any) => r.featureId);
+    const forkCommitId: string | null = conflictRows[0]?.forkCommitId || null;
 
-      const sourceFeatureMap = new Map(
-        sourceFeatures.map((f) => [f.featureId, f]),
-      );
-      const targetFeatureMap = new Map(
-        targetFeatures.map((f) => [f.featureId, f]),
-      );
+    const featuresByHeadQuery = `
+      SELECT DISTINCT ON (sf.feature_id)
+        sf.id,
+        sf.feature_id as "featureId",
+        sf.geometry_type as "geometryType",
+        sf.geometry,
+        sf.properties,
+        sf.operation,
+        sf.commit_id as "commitId",
+        sf.created_at as "createdAt"
+      FROM spatial_features sf
+      WHERE sf.commit_id IN (
+        SELECT unnest(ancestor_ids) FROM commits WHERE id = $1
+      )
+        AND sf.feature_id = ANY($2)
+      ORDER BY sf.feature_id, sf.created_at DESC
+    `;
 
-      const commonAncestor = await this.findCommonAncestor(
-        sourceBranch,
-        targetBranch,
-      );
+    const ancestorQuery = forkCommitId
+      ? this.dataSource.query(
+          `
+          SELECT DISTINCT ON (sf.feature_id)
+            sf.id,
+            sf.feature_id as "featureId",
+            sf.geometry_type as "geometryType",
+            sf.geometry,
+            sf.properties,
+            sf.operation,
+            sf.commit_id as "commitId",
+            sf.created_at as "createdAt"
+          FROM spatial_features sf
+          WHERE sf.commit_id IN (
+            SELECT unnest(ancestor_ids) FROM commits WHERE id = $1
+          )
+            AND sf.feature_id = ANY($2)
+            AND sf.operation != '${FeatureOperation.DELETE}'
+          ORDER BY sf.feature_id, sf.created_at DESC
+          `,
+          [forkCommitId, featureIds],
+        )
+      : Promise.resolve([]);
 
-      for (const { featureId } of conflictIds) {
-        const sourceFeature = sourceFeatureMap.get(featureId);
-        const targetFeature = targetFeatureMap.get(featureId);
+    const [sourceFeatures, targetFeatures, ancestorFeatures] =
+      await Promise.all([
+        this.dataSource.query(featuresByHeadQuery, [
+          sourceBranch.headCommitId,
+          featureIds,
+        ]),
+        this.dataSource.query(featuresByHeadQuery, [
+          targetBranch.headCommitId,
+          featureIds,
+        ]),
+        ancestorQuery,
+      ]);
 
-        if (sourceFeature && targetFeature) {
-          let ancestorFeature: SpatialFeature | null = null;
-          if (commonAncestor) {
-            ancestorFeature = await this.getFeatureAtCommit(
-              commonAncestor.id,
-              featureId,
-            );
-          }
+    const sourceMap = new Map<string, SpatialFeature>(
+      sourceFeatures.map((f: any) => [f.featureId, f]),
+    );
+    const targetMap = new Map<string, SpatialFeature>(
+      targetFeatures.map((f: any) => [f.featureId, f]),
+    );
+    const ancestorMap = new Map<string, SpatialFeature>(
+      ancestorFeatures.map((f: any) => [f.featureId, f]),
+    );
 
-          conflicts.push({
-            featureId,
-            mainVersion: targetFeature,
-            branchVersion: sourceFeature,
-            ancestorVersion: ancestorFeature,
-            conflictType: 'both_modified',
-          });
-        }
-      }
-    }
+    return featureIds
+      .filter((id) => sourceMap.has(id) && targetMap.has(id))
+      .map((featureId) => ({
+        featureId,
+        branchVersion: sourceMap.get(featureId),
+        mainVersion: targetMap.get(featureId),
+        ancestorVersion: ancestorMap.get(featureId) || null,
+        conflictType: 'both_modified' as const,
+      }));
+  }
 
-    return conflicts;
+  private async getCommitHistory(headCommitId: string): Promise<Commit[]> {
+    const query = `
+      WITH commit_ids AS (
+        SELECT unnest(ancestor_ids) as id
+        FROM commits
+        WHERE id = $1
+      )
+      SELECT
+        c.id,
+        c.branch_id as "branchId",
+        c.message,
+        c.author_id as "authorId",
+        c.parent_commit_id as "parentCommitId",
+        c.created_at as "createdAt"
+      FROM commits c
+      WHERE c.id IN (SELECT id FROM commit_ids)
+      ORDER BY c.created_at ASC;
+    `;
+
+    return this.dataSource.query(query, [headCommitId]);
   }
 
   async findCommonAncestor(
@@ -650,30 +719,6 @@ export class BranchService {
     return { features: results, total };
   }
 
-  private async getCommitHistory(headCommitId: string): Promise<Commit[]> {
-    const query = `
-      WITH commit_ids AS (
-        SELECT unnest(ancestor_ids) as id
-        FROM commits
-        WHERE id = $1
-      )
-      SELECT
-        c.id,
-        c.branch_id as "branchId",
-        c.message,
-        c.author_id as "authorId",
-        c.parent_commit_id as "parentCommitId",
-        c.created_at as "createdAt"
-      FROM commits c
-      WHERE c.id IN (SELECT id FROM commit_ids)
-      ORDER BY c.created_at ASC;
-    `;
-
-    const results = await this.dataSource.query(query, [headCommitId]);
-
-    return results;
-  }
-
   canEditBranch(branch: Branch, user: User): boolean {
     if (branch.isDisabled) {
       return false;
@@ -768,6 +813,42 @@ export class BranchService {
     const resolvedFeatures: any[] = [];
 
     const commonAncestor = await this.findCommonAncestor(branch, mainBranch);
+
+    const forkCommitId = branch.forkCommitId || branch.headCommitId;
+    const conflictedFeatureIds = resolveDto.resolutions.map((r) => r.featureId);
+
+    const mainNewFeatures = await this.dataSource.query(
+      `
+      WITH main_only_commits AS (
+        SELECT unnest(m.ancestor_ids) as id
+        FROM commits m WHERE m.id = $1
+        EXCEPT
+        SELECT unnest(f.ancestor_ids) as id
+        FROM commits f WHERE f.id = $2
+      )
+      SELECT DISTINCT ON (sf.feature_id)
+        sf.feature_id as "featureId",
+        sf.geometry_type as "geometryType",
+        sf.geometry,
+        sf.properties,
+        sf.operation
+      FROM spatial_features sf
+      WHERE sf.commit_id IN (SELECT id FROM main_only_commits)
+        AND sf.feature_id != ALL($3)
+      ORDER BY sf.feature_id, sf.created_at DESC
+      `,
+      [mainBranch.headCommitId, forkCommitId, conflictedFeatureIds],
+    );
+
+    for (const f of mainNewFeatures) {
+      resolvedFeatures.push({
+        featureId: f.featureId,
+        geometryType: f.geometryType,
+        geometry: f.geometry,
+        properties: f.properties,
+        operation: f.operation,
+      });
+    }
 
     for (const resolution of resolveDto.resolutions) {
       const branchFeature = branchFeatureMap.get(resolution.featureId);
@@ -930,6 +1011,7 @@ export class BranchService {
       delete (branch as any).createdBy;
       branch.headCommitId = savedCommit.id;
       branch.hasUnresolvedConflicts = false;
+      branch.forkCommitId = mainBranch.headCommitId;
       await queryRunner.manager.save(branch);
 
       await queryRunner.commitTransaction();

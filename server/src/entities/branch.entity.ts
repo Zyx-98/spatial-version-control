@@ -47,6 +47,9 @@ export class Branch {
   @Column({ name: 'head_commit_id', nullable: true })
   headCommitId: string;
 
+  @Column({ name: 'fork_commit_id', nullable: true })
+  forkCommitId: string;
+
   @Column({ name: 'min_lng', type: 'double precision', nullable: true })
   minLng: number;
 
