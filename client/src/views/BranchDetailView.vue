@@ -116,23 +116,27 @@
             <button
               v-if="!branch.isMain && !branch.isDisabled"
               @click="handleCreateMergeRequest"
-              :disabled="hasOpenMergeRequest"
+              :disabled="hasOpenMergeRequest || branchIsUpToDate"
               :class="[
                 'px-4 py-2 rounded-md',
-                hasOpenMergeRequest || branch.isDisabled
+                hasOpenMergeRequest || branchIsUpToDate
                   ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
                   : 'bg-green-600 text-white hover:bg-green-700',
               ]"
               :title="
                 hasOpenMergeRequest
                   ? 'This branch already has an open merge request'
-                  : ''
+                  : branchIsUpToDate
+                    ? 'No changes to merge — this branch is already up to date with main'
+                    : ''
               "
             >
               {{
                 hasOpenMergeRequest
                   ? "PR Already Open"
-                  : "Create Merge Request"
+                  : branchIsUpToDate
+                    ? "Up to Date"
+                    : "Create Merge Request"
               }}
             </button>
           </div>
@@ -656,6 +660,13 @@ const canEdit = computed(() => spatialStore.branchCanEdit);
 const hasOpenMergeRequest = computed(
   () => spatialStore.branchHasOpenMergeRequest
 );
+const branchIsUpToDate = computed(() => {
+  const mainBranch = spatialStore.branches.find(
+    (b) => b.isMain && b.datasetId === datasetId
+  );
+  if (!mainBranch || !branch.value) return false;
+  return branch.value.headCommitId === mainBranch.headCommitId;
+});
 const hasUnresolvedConflicts = computed(
   () => spatialStore.branchHasUnresolvedConflicts
 );
@@ -754,6 +765,11 @@ const handleCreateMergeRequest = async () => {
     );
     if (!mainBranch) {
       alert("Main branch not found");
+      return;
+    }
+
+    if (branch.value?.headCommitId === mainBranch.headCommitId) {
+      alert("No changes to merge — this branch is already up to date with main.");
       return;
     }
 

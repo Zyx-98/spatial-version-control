@@ -58,6 +58,26 @@ export class MergeRequestService {
       throw new BadRequestException('Branches must belong to the same dataset');
     }
 
+    if (sourceBranch.headCommitId === targetBranch.headCommitId) {
+      throw new BadRequestException(
+        'No changes to merge: this branch is already up to date with main',
+      );
+    }
+
+    if (sourceBranch.headCommitId && targetBranch.headCommitId) {
+      const forkResult = await this.dataSource.query(
+        `SELECT find_common_ancestor($1, $2) as fork_id`,
+        [sourceBranch.headCommitId, targetBranch.headCommitId],
+      );
+      const forkCommitId: string | null = forkResult[0]?.fork_id || null;
+
+      if (forkCommitId === sourceBranch.headCommitId) {
+        throw new BadRequestException(
+          'No changes to merge: this branch has no new commits ahead of main',
+        );
+      }
+    }
+
     const conflictData = await this.branchService.detectConflicts(
       sourceBranch,
       targetBranch,
