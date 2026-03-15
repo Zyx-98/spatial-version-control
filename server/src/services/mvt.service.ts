@@ -36,22 +36,23 @@ export class MvtService {
           commit_id,
           ST_AsMVTGeom(
             CASE
-              WHEN $5 > 0 THEN ST_SimplifyPreserveTopology(geom_3857, $5)
+              WHEN $6 > 0 THEN ST_SimplifyPreserveTopology(geom_3857, $6)
               ELSE geom_3857
             END,
-            ST_TileEnvelope($1, $2, $3),
+            ST_TileEnvelope($2, $3, $4),
             4096,
             256,
             true
           ) AS geom
         FROM main_branch_latest_features
-        WHERE geom_3857 IS NOT NULL
+        WHERE branch_id = $1
+          AND geom_3857 IS NOT NULL
           AND ST_Intersects(
             geom_3857,
-            ST_TileEnvelope($1, $2, $3)
+            ST_TileEnvelope($2, $3, $4)
           )
       )
-      SELECT ST_AsMVT(mvt_features, $4, 4096, 'geom') as mvt
+      SELECT ST_AsMVT(mvt_features, $5, 4096, 'geom') as mvt
       FROM mvt_features;
     `
       : `
@@ -125,7 +126,7 @@ export class MvtService {
     `;
 
     const params = isMain
-      ? [z, x, y, layerName, simplificationTolerance]
+      ? [branchId, z, x, y, layerName, simplificationTolerance]
       : [branchId, z, x, y, layerName, simplificationTolerance];
 
     const result = await this.dataSource.query(query, params);
@@ -198,14 +199,15 @@ export class MvtService {
             true
           ) AS geom
         FROM main_branch_latest_features
-        WHERE feature_id = ANY($1::uuid[])
+        WHERE branch_id = $1
+          AND feature_id = ANY($2::uuid[])
           AND geom_3857 IS NOT NULL
           AND ST_Intersects(
             geom_3857,
-            ST_TileEnvelope($2, $3, $4)
+            ST_TileEnvelope($3, $4, $5)
           )
       )
-      SELECT ST_AsMVT(mvt_features, $5, 4096, 'geom') as mvt
+      SELECT ST_AsMVT(mvt_features, $6, 4096, 'geom') as mvt
       FROM mvt_features;
     `
       : `
@@ -276,7 +278,7 @@ export class MvtService {
     `;
 
     const params = isMainBranch
-      ? [featureIds, z, x, y, layerName]
+      ? [branchId, featureIds, z, x, y, layerName]
       : [branchId, featureIds, z, x, y, layerName];
 
     const result = await this.dataSource.query(query, params);

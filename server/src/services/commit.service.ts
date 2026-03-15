@@ -156,6 +156,12 @@ export class CommitService {
 
       await queryRunner.commitTransaction();
 
+      if (branch.isMain) {
+        await this.dataSource.query(
+          'REFRESH MATERIALIZED VIEW CONCURRENTLY main_branch_latest_features',
+        );
+      }
+
       return savedCommit;
     } catch (error) {
       await queryRunner.rollbackTransaction();
