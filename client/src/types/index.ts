@@ -80,6 +80,7 @@ export interface CreateBranchRequest {
 export interface BranchConflicts {
   hasConflicts: boolean;
   conflicts: ConflictDetail[];
+  message?: string;
 }
 
 export interface ConflictDetail {
@@ -298,4 +299,3 @@ export interface PaginatedResponse<T> {
   data: T[];
   meta: PaginationMeta;
 }
-

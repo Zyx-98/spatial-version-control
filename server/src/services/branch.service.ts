@@ -173,37 +173,223 @@ export class BranchService {
       throw new NotFoundException('Main branch not found for the dataset');
     }
 
-    const conflicts = await this.detectConflicts(branch, mainBranch);
-
-    let shouldMarkAsUnresolved = conflicts.length > 0;
-
-    if (conflicts.length > 0 && branch.headCommitId) {
-      const latestCommit = await this.commitRepository.findOne({
-        where: { id: branch.headCommitId },
-      });
-
-      if (
-        latestCommit?.message.includes('Resolve conflicts with main branch')
-      ) {
-        const mainLastUpdated = new Date(
-          mainBranch.updatedAt || mainBranch.createdAt,
-        );
-        const resolutionTime = new Date(latestCommit.createdAt);
-
-        if (mainLastUpdated <= resolutionTime) {
-          shouldMarkAsUnresolved = false;
-        }
-      }
+    if (!mainBranch.headCommitId) {
+      return { hasConflicts: false, conflicts: [], message: 'fast-forward' };
     }
 
+    if (mainBranch.headCommitId === branch.headCommitId) {
+      return { hasConflicts: false, conflicts: [], message: 'fast-forward' };
+    }
+
+    const forkResult = await this.dataSource.query(
+      `SELECT find_common_ancestor($1, $2) as fork_id`,
+      [branch.headCommitId, mainBranch.headCommitId],
+    );
+    const forkCommitId: string | null = forkResult[0]?.fork_id || null;
+
+    if (!forkCommitId) {
+      return { hasConflicts: false, conflicts: [], message: 'fast-forward' };
+    }
+
+    if (forkCommitId === mainBranch.headCommitId) {
+      return { hasConflicts: false, conflicts: [], message: 'fast-forward' };
+    }
+
+    const branchHasOwnCommits = branch.headCommitId !== forkCommitId;
+
+    if (!branchHasOwnCommits) {
+      await this.branchRepository.update(branchId, {
+        headCommitId: mainBranch.headCommitId,
+        hasUnresolvedConflicts: false,
+      });
+
+      return { hasConflicts: false, conflicts: [], message: 'fast-forward' };
+    }
+
+    const conflictIds = await this.dataSource.query(
+      `
+      WITH
+      branch_only_commits AS (
+        SELECT unnest(b.ancestor_ids) as id
+        FROM commits b WHERE b.id = $1
+        EXCEPT
+        SELECT unnest(f.ancestor_ids) as id
+        FROM commits f WHERE f.id = $3
+      ),
+      main_only_commits AS (
+        SELECT unnest(m.ancestor_ids) as id
+        FROM commits m WHERE m.id = $2
+        EXCEPT
+        SELECT unnest(f.ancestor_ids) as id
+        FROM commits f WHERE f.id = $3
+      ),
+      branch_features AS (
+        SELECT DISTINCT ON (sf.feature_id) sf.*
+        FROM spatial_features sf
+        WHERE sf.commit_id IN (SELECT id FROM branch_only_commits)
+        ORDER BY sf.feature_id, sf.created_at DESC
+      ),
+      main_features AS (
+        SELECT DISTINCT ON (sf.feature_id) sf.*
+        FROM spatial_features sf
+        WHERE sf.commit_id IN (SELECT id FROM main_only_commits)
+        ORDER BY sf.feature_id, sf.created_at DESC
+      )
+      SELECT
+        bf.feature_id as "featureId",
+        'both_modified' as "conflictType"
+      FROM branch_features bf
+      INNER JOIN main_features mf ON bf.feature_id = mf.feature_id
+      WHERE bf.operation != '${FeatureOperation.DELETE}'
+        AND mf.operation != '${FeatureOperation.DELETE}'
+        AND (
+          NOT ST_Equals(bf.geom, mf.geom)
+          OR bf.properties::text != mf.properties::text
+        )
+    `,
+      [branch.headCommitId, mainBranch.headCommitId, forkCommitId],
+    );
+
+    if (conflictIds.length === 0) {
+      await this.createFetchMergeCommit(branch, mainBranch, forkCommitId, user);
+      return { hasConflicts: false, conflicts: [], message: 'auto-merged' };
+    }
+
+    const featureIds = conflictIds.map((c: any) => c.featureId);
+
+    const [branchSnap, mainSnap, ancestorFeatures] = await Promise.all([
+      this.getLatestFeatures(branch.id),
+      this.getLatestFeatures(mainBranch.id),
+      // Get state of each conflicted feature as it was at the fork point.
+      this.dataSource.query(
+        `
+        SELECT DISTINCT ON (sf.feature_id)
+          sf.feature_id as "featureId",
+          sf.geometry_type as "geometryType",
+          sf.geometry, sf.geom, sf.properties, sf.operation,
+          sf.commit_id as "commitId", sf.created_at as "createdAt"
+        FROM spatial_features sf
+        WHERE sf.commit_id = ANY(
+          SELECT unnest(ancestor_ids) FROM commits WHERE id = $1
+        )
+        AND sf.feature_id = ANY($2)
+        AND sf.operation != '${FeatureOperation.DELETE}'
+        ORDER BY sf.feature_id, sf.created_at DESC
+      `,
+        [forkCommitId, featureIds],
+      ),
+    ]);
+
+    const branchMap = new Map(branchSnap.features.map((f) => [f.featureId, f]));
+    const mainMap = new Map(mainSnap.features.map((f) => [f.featureId, f]));
+    const ancestorMap = new Map(
+      ancestorFeatures.map((f: any) => [f.featureId, f]),
+    );
+
+    const conflicts: ConflictDetail[] = conflictIds.map((c: any) => ({
+      featureId: c.featureId,
+      branchVersion: branchMap.get(c.featureId) || null,
+      mainVersion: mainMap.get(c.featureId) || null,
+      ancestorVersion: ancestorMap.get(c.featureId) || null,
+      conflictType: 'both_modified' as const,
+    }));
+
     await this.branchRepository.update(branchId, {
-      hasUnresolvedConflicts: shouldMarkAsUnresolved,
+      hasUnresolvedConflicts: true,
     });
 
-    return {
-      hasConflicts: conflicts.length > 0,
-      conflicts,
-    };
+    return { hasConflicts: true, conflicts };
+  }
+
+  private async createFetchMergeCommit(
+    branch: Branch,
+    mainBranch: Branch,
+    forkCommitId: string,
+    user: User,
+  ): Promise<void> {
+    const mainNewFeatures = await this.dataSource.query(
+      `
+      WITH main_only_commits AS (
+        SELECT unnest(m.ancestor_ids) as id
+        FROM commits m WHERE m.id = $1
+        EXCEPT
+        SELECT unnest(f.ancestor_ids) as id
+        FROM commits f WHERE f.id = $2
+      )
+      SELECT DISTINCT ON (sf.feature_id)
+        sf.id,
+        sf.feature_id,
+        sf.geometry_type,
+        sf.geometry,
+        sf.geom,
+        sf.properties,
+        sf.operation,
+        sf.commit_id,
+        sf.created_at
+      FROM spatial_features sf
+      WHERE sf.commit_id IN (SELECT id FROM main_only_commits)
+      ORDER BY sf.feature_id, sf.created_at DESC
+    `,
+      [mainBranch.headCommitId, forkCommitId],
+    );
+
+    if (mainNewFeatures.length === 0) {
+      await this.branchRepository.update(branch.id, {
+        headCommitId: mainBranch.headCommitId,
+        hasUnresolvedConflicts: false,
+      });
+      return;
+    }
+
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+
+    try {
+      const lockedBranch = await queryRunner.manager.findOne(Branch, {
+        where: { id: branch.id },
+        lock: { mode: 'pessimistic_write' },
+      });
+
+      if (!lockedBranch) {
+        throw new NotFoundException('Branch not found');
+      }
+
+      const mergeCommit = queryRunner.manager.create(Commit, {
+        message: `Fetch: merge main into '${branch.name}' (main at ${mainBranch.headCommitId.slice(0, 8)})`,
+        branchId: branch.id,
+        authorId: user.id,
+        parentCommitId: lockedBranch.headCommitId,
+      });
+
+      const savedCommit = await queryRunner.manager.save(mergeCommit);
+
+      const featuresToAdd = mainNewFeatures.map((f: any) =>
+        queryRunner.manager.create(SpatialFeature, {
+          featureId: f.feature_id,
+          geometryType: f.geometry_type,
+          geometry: f.geometry,
+          geom: f.geometry,
+          properties: f.properties,
+          operation: f.operation,
+          commitId: savedCommit.id,
+        }),
+      );
+
+      await queryRunner.manager.save(featuresToAdd);
+
+      await queryRunner.manager.update(Branch, branch.id, {
+        headCommitId: savedCommit.id,
+        hasUnresolvedConflicts: false,
+      });
+
+      await queryRunner.commitTransaction();
+    } catch (error) {
+      await queryRunner.rollbackTransaction();
+      throw error;
+    } finally {
+      await queryRunner.release();
+    }
   }
 
   async detectConflicts(

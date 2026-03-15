@@ -719,8 +719,20 @@ const handleExportShapefile = async () => {
 const handleFetchMain = async () => {
   try {
     conflictResolutions.value = [];
-    await spatialStore.fetchMainBranch(branchId);
-    showConflictsModal.value = true;
+    const result = await spatialStore.fetchMainBranch(branchId);
+
+    if (result?.hasConflicts) {
+      showConflictsModal.value = true;
+    } else {
+      const msg =
+        result?.message === "fast-forward"
+          ? "Your branch has been updated with the latest changes from main."
+          : result?.message === "auto-merged"
+            ? "The latest changes from main have been added to your branch successfully."
+            : "Your branch is already up to date. No changes were needed.";
+      alert(msg);
+      await loadCommits(1, commitsPerPage.value);
+    }
   } catch (error) {
     console.error("Failed to fetch main:", error);
   }

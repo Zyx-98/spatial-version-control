@@ -218,7 +218,20 @@ export class CommitService {
   }
 
   async getFeatureHistory(branchId: string, featureId: string) {
+    const branch = await this.dataSource.query(
+      `SELECT head_commit_id FROM branches WHERE id = $1`,
+      [branchId],
+    );
+
+    if (!branch.length || !branch[0].head_commit_id) {
+      return [];
+    }
+
     const query = `
+      WITH ancestor_ids AS (
+        SELECT unnest(ancestor_ids) as id
+        FROM commits WHERE id = $1
+      )
       SELECT
         sf.id,
         sf.feature_id as "featureId",
@@ -230,14 +243,13 @@ export class CommitService {
         sf.created_at as "createdAt",
         sf.updated_at as "updatedAt"
       FROM spatial_features sf
-      INNER JOIN commits c ON sf.commit_id = c.id
-      WHERE c.branch_id = $1
+      WHERE sf.commit_id IN (SELECT id FROM ancestor_ids)
         AND sf.feature_id = $2
-      ORDER BY c.created_at ASC, sf.created_at ASC
+      ORDER BY sf.created_at ASC
     `;
 
     const featureHistory = await this.dataSource.query(query, [
-      branchId,
+      branch[0].head_commit_id,
       featureId,
     ]);
 

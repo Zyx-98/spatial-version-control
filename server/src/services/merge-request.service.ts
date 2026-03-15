@@ -232,6 +232,18 @@ export class MergeRequestService {
       const { features: sourceFeatures } =
         await this.branchService.getLatestFeatures(sourceBranch.id);
 
+      const resolutionMap = new Map<string, string>(
+        ((mergeRequest.conflicts || []) as any[])
+          .filter((c) => c.resolved && c.resolution)
+          .map((c) => [c.featureId, c.resolution]),
+      );
+
+      const featuresToWrite = sourceFeatures.filter((feature) => {
+        const resolution = resolutionMap.get(feature.featureId);
+        if (resolution === 'use_main') return false;
+        return true;
+      });
+
       const mergeCommit = queryRunner.manager.create(Commit, {
         message: `Merge branch '${sourceBranch.name}' into '${targetBranch.name}'`,
         branchId: targetBranch.id,
@@ -241,7 +253,7 @@ export class MergeRequestService {
 
       const savedMergeCommit = await queryRunner.manager.save(mergeCommit);
 
-      const mergedFeatures = sourceFeatures.map((feature) => {
+      const mergedFeatures = featuresToWrite.map((feature) => {
         return queryRunner.manager.create(SpatialFeature, {
           featureId: feature.featureId,
           geometryType: feature.geometryType,

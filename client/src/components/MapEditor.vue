@@ -215,10 +215,12 @@ const setupDrawingHandlers = () => {
 };
 
 const handleSelectClick = (e: maplibregl.MapMouseEvent) => {
-  // First check editable features (GeoJSON overlay)
-  const editableFeatures = map!.queryRenderedFeatures(e.point, {
-    layers: ["features-fill", "features-line", "features-point"],
-  });
+  const existingLayers = ["features-fill", "features-line", "features-point"].filter(
+    (id) => map!.getLayer(id)
+  );
+  const editableFeatures = existingLayers.length > 0
+    ? map!.queryRenderedFeatures(e.point, { layers: existingLayers })
+    : [];
 
   if (editableFeatures && editableFeatures.length > 0) {
     const clickedFeature = editableFeatures[0];

@@ -29,6 +29,7 @@ export class FetchMainBranchDto {
 export class BranchConflictsDto {
   hasConflicts: boolean;
   conflicts: ConflictDetail[];
+  message?: string;
 }
 
 export class ConflictDetail {
