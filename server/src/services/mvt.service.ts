@@ -59,7 +59,6 @@ export class MvtService {
       WITH commit_chain AS (
         SELECT
           unnest(c.ancestor_ids) as id,
-          c.created_at,
           generate_series(0, array_length(c.ancestor_ids, 1) - 1) as depth
         FROM branches b
         INNER JOIN commits c ON b.head_commit_id = c.id
@@ -77,13 +76,11 @@ export class MvtService {
           sf.commit_id,
           ROW_NUMBER() OVER (
             PARTITION BY sf.feature_id
-            ORDER BY cc.created_at DESC, sf.created_at DESC
+            ORDER BY cc.depth DESC, sf.created_at DESC
           ) as rn
         FROM spatial_features sf
         INNER JOIN commit_chain cc ON sf.commit_id = cc.id
-        WHERE sf.operation != 'delete'
-          AND sf.geom IS NOT NULL
-          AND ST_IsValid(sf.geom)
+        WHERE sf.geom IS NOT NULL
       ),
       latest_features AS (
         SELECT
@@ -96,6 +93,7 @@ export class MvtService {
           commit_id
         FROM features_with_order
         WHERE rn = 1
+          AND operation != 'delete'
       ),
       mvt_features AS (
         SELECT

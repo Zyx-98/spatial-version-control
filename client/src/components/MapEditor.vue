@@ -856,6 +856,14 @@ watch(
     clearTemporaryDrawing();
     currentDrawing = [];
 
+    if (map) {
+      if (newTool === "line" || newTool === "polygon") {
+        map.doubleClickZoom.disable();
+      } else {
+        map.doubleClickZoom.enable();
+      }
+    }
+
     if (newTool !== "select" && newTool !== "edit") {
       selectedFeatureIndex = null;
       editingFeature.value = null;
@@ -886,8 +894,16 @@ watch(
 watch(
   () => props.features,
   () => {
-    if (props.tool !== "edit" && map && map.loaded()) {
+    if (props.tool === "edit" || !map) return;
+    if (map.loaded()) {
       renderPermanentFeatures();
+    } else {
+      // Map is loading tiles (e.g. from a zoom). Wait until idle then render.
+      map.once("idle", () => {
+        if (props.tool !== "edit") {
+          renderPermanentFeatures();
+        }
+      });
     }
   },
   { deep: true }
@@ -896,6 +912,11 @@ watch(
 onMounted(() => {
   initMap();
   map!.on("load", () => {
+    // Disable dblclick zoom if starting in a drawing tool
+    if (props.tool === "line" || props.tool === "polygon") {
+      map!.doubleClickZoom.disable();
+    }
+
     // If branchId is provided, use MVT for context (read-only features)
     if (props.branchId && mvtSourceId.value) {
       addBranchMvtLayer(map!, props.branchId, {

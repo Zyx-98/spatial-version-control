@@ -170,7 +170,7 @@ export class BranchController {
       parseInt(y),
     );
 
-    res.setHeader('Cache-Control', 'public, max-age=3600');
+    res.setHeader('Cache-Control', 'no-cache');
 
     return res.send(tile);
   }
@@ -219,7 +219,6 @@ export class BranchController {
       this.branchService.findOne(targetBranchId, user),
     ]);
 
-    // Use cached tile service for better performance
     const tile = await this.tileCacheService.getDiffTile(
       sourceBranchId,
       targetBranchId,
@@ -228,7 +227,7 @@ export class BranchController {
       parseInt(y),
     );
 
-    res.setHeader('Cache-Control', 'public, max-age=3600');
+    res.setHeader('Cache-Control', 'no-cache');
     return res.send(tile);
   }
 }

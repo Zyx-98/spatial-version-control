@@ -183,6 +183,7 @@
         </div>
         <div class="p-4">
           <MapViewer
+            :key="branch?.headCommitId"
             :branchId="branchId"
             color="#3b82f6"
             :height="500"
