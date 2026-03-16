@@ -14,6 +14,7 @@ import {
 } from 'src/entities';
 import { DataSource, Repository } from 'typeorm';
 import { BranchService } from './branch.service';
+import { ConflictCheckerService } from './conflict-checker.service';
 import { CreateCommitDto } from 'src/dto/commit.dto';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -25,6 +26,7 @@ export class CommitService {
     @InjectRepository(Branch)
     private branchRepository: Repository<Branch>,
     private branchService: BranchService,
+    private conflictCheckerService: ConflictCheckerService,
     private dataSource: DataSource,
   ) {}
 
@@ -43,6 +45,15 @@ export class CommitService {
       throw new ForbiddenException(
         'Cannot create commit. This branch has unresolved conflicts with main. Please resolve conflicts first.',
       );
+    }
+
+    if (!branch.isMain) {
+      const hasOpenMR = await this.branchService.hasOpenMergeRequest(branchId);
+      if (hasOpenMR) {
+        throw new ForbiddenException(
+          'Cannot create commit. This branch has an open merge request.',
+        );
+      }
     }
 
     if (!branch.isMain) {
@@ -159,6 +170,10 @@ export class CommitService {
       if (branch.isMain) {
         await this.dataSource.query(
           'REFRESH MATERIALIZED VIEW CONCURRENTLY main_branch_latest_features',
+        );
+
+        await this.conflictCheckerService.recheckConflictsForMainBranch(
+          branch.id,
         );
       }
 

@@ -9,6 +9,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import {
   Branch,
   Commit,
+  FeatureOperation,
   MergeRequest,
   MergeRequestStatus,
   SpatialFeature,
@@ -17,6 +18,7 @@ import {
 } from 'src/entities';
 import { DataSource, Repository } from 'typeorm';
 import { BranchService } from './branch.service';
+import { ConflictCheckerService } from './conflict-checker.service';
 import {
   CreateMergeRequestDto,
   ResolveMergeConflictsDto,
@@ -31,6 +33,7 @@ export class MergeRequestService {
     @InjectRepository(Commit)
     private commitRepository: Repository<Commit>,
     private branchService: BranchService,
+    private conflictCheckerService: ConflictCheckerService,
     private dataSource: DataSource,
   ) {}
 
@@ -47,6 +50,14 @@ export class MergeRequestService {
     if (sourceBranch.isDisabled) {
       throw new BadRequestException(
         'Cannot create merge request from a disabled branch',
+      );
+    }
+
+    const hasOpenMR =
+      await this.branchService.hasOpenMergeRequest(sourceBranchId);
+    if (hasOpenMR) {
+      throw new BadRequestException(
+        'This branch already has an open merge request',
       );
     }
 
@@ -74,6 +85,58 @@ export class MergeRequestService {
       if (forkCommitId === sourceBranch.headCommitId) {
         throw new BadRequestException(
           'No changes to merge: this branch has no new commits ahead of main',
+        );
+      }
+
+      const featureDiffResult = await this.dataSource.query(
+        `
+        WITH source_only_commits AS (
+          SELECT unnest(s.ancestor_ids) as id
+          FROM commits s WHERE s.id = $1
+          EXCEPT
+          SELECT unnest(t.ancestor_ids) as id
+          FROM commits t WHERE t.id = $2
+        ),
+        source_only_features AS (
+          SELECT DISTINCT ON (sf.feature_id)
+            sf.feature_id,
+            sf.geometry,
+            sf.geom,
+            sf.properties,
+            sf.operation
+          FROM spatial_features sf
+          WHERE sf.commit_id IN (SELECT id FROM source_only_commits)
+          ORDER BY sf.feature_id, sf.created_at DESC
+        ),
+        main_latest AS (
+          SELECT DISTINCT ON (sf.feature_id)
+            sf.feature_id,
+            sf.geometry,
+            sf.geom,
+            sf.properties,
+            sf.operation
+          FROM spatial_features sf
+          WHERE sf.commit_id IN (
+            SELECT unnest(ancestor_ids) FROM commits WHERE id = $2
+          )
+          AND sf.operation != 'delete'
+          ORDER BY sf.feature_id, sf.created_at DESC
+        )
+        SELECT COUNT(*) as diff_count
+        FROM source_only_features sof
+        LEFT JOIN main_latest ml ON sof.feature_id = ml.feature_id
+        WHERE sof.operation = 'delete'
+           OR ml.feature_id IS NULL
+           OR NOT ST_Equals(sof.geom, ml.geom)
+           OR sof.properties::text != ml.properties::text
+        `,
+        [sourceBranch.headCommitId, targetBranch.headCommitId],
+      );
+
+      const diffCount = parseInt(featureDiffResult[0]?.diff_count ?? '0');
+      if (diffCount === 0) {
+        throw new BadRequestException(
+          'No changes to merge: this branch has no feature differences with main',
         );
       }
     }
@@ -283,8 +346,8 @@ export class MergeRequestService {
         SELECT sof.*
         FROM source_only_features sof
         LEFT JOIN main_latest ml ON sof."featureId" = ml.feature_id
-        WHERE sof.operation != 'delete'
-           OR (ml.main_operation IS NOT NULL AND ml.main_operation != 'delete')
+        WHERE sof.operation != '${FeatureOperation.DELETE}'
+           OR (ml.main_operation IS NOT NULL AND ml.main_operation != '${FeatureOperation.DELETE}')
         `,
         [sourceBranch.headCommitId, lockedTargetBranch.headCommitId],
       );
@@ -348,6 +411,10 @@ export class MergeRequestService {
     } finally {
       await queryRunner.release();
     }
+
+    await this.conflictCheckerService.recheckConflictsForMainBranch(
+      mergeRequest.targetBranchId,
+    );
   }
 
   async resolveConflicts(

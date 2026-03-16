@@ -163,6 +163,13 @@ export class BranchService {
       throw new BadRequestException('Branch is already the main branch');
     }
 
+    const hasOpenMR = await this.hasOpenMergeRequest(branchId);
+    if (hasOpenMR) {
+      throw new BadRequestException(
+        'Cannot fetch main: this branch has an open merge request',
+      );
+    }
+
     const mainBranch = await this.branchRepository.findOne({
       where: { datasetId: branch.datasetId, isMain: true },
     });

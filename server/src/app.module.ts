@@ -34,6 +34,7 @@ import { JwtStrategy } from './strategies/jwt.strategy';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { REDIS_CLIENT, RedisLockService } from './services/redis-lock.service';
 import { LOCK_SERVICE } from './interfaces/lock-service.interface';
+import { ConflictCheckerService } from './services/conflict-checker.service';
 import Redis from 'ioredis';
 
 @Module({
@@ -132,6 +133,7 @@ import Redis from 'ioredis';
     MvtService,
     TileCacheService,
     DiffService,
+    ConflictCheckerService,
     JwtStrategy,
     JwtAuthGuard,
     {

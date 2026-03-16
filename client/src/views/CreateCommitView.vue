@@ -38,7 +38,8 @@
             <h2 class="text-lg font-semibold mb-4">Import GeoJSON</h2>
             <div class="space-y-3">
               <p class="text-sm text-gray-600">
-                Load features from a GeoJSON file to the map. You can review and edit them before committing.
+                Load features from a GeoJSON file to the map. You can review and
+                edit them before committing.
               </p>
               <div>
                 <input
@@ -137,8 +138,9 @@
             <h2 class="text-lg font-semibold mb-4">Import Shapefile</h2>
             <div class="space-y-3">
               <p class="text-sm text-gray-600">
-                Upload a ZIP file containing shapefile components (.shp, .shx, .dbf, .prj).
-                Features will be loaded to the map for review before committing.
+                Upload a ZIP file containing shapefile components (.shp, .shx,
+                .dbf, .prj). Features will be loaded to the map for review
+                before committing.
               </p>
               <div>
                 <input
@@ -486,23 +488,31 @@
                 💡 Instructions:
               </p>
               <ul class="text-xs text-blue-800 space-y-1.5">
-                <li v-if="currentTool !== 'select'" class="text-orange-700 font-semibold">
+                <li
+                  v-if="currentTool !== 'select'"
+                  class="text-orange-700 font-semibold"
+                >
                   ⚠️ To edit existing features, switch to "Select" mode above
                 </li>
                 <li>
-                  <strong>View Existing:</strong> Gray features are existing data (read-only)
+                  <strong>View Existing:</strong> Gray features are existing
+                  data (read-only)
                 </li>
                 <li>
-                  <strong>Edit Existing:</strong> Use "Select" mode, then click any gray feature
+                  <strong>Edit Existing:</strong> Use "Select" mode, then click
+                  any gray feature
                 </li>
                 <li>
-                  <strong>Add New:</strong> Select Point/Line/Polygon and draw on map
+                  <strong>Add New:</strong> Select Point/Line/Polygon and draw
+                  on map
                 </li>
                 <li>
-                  <strong>Edit Properties:</strong> Select feature → Edit in left panel
+                  <strong>Edit Properties:</strong> Select feature → Edit in
+                  left panel
                 </li>
                 <li>
-                  <strong>Edit Geometry:</strong> Select feature → Click "Edit Geometry" → Drag markers
+                  <strong>Edit Geometry:</strong> Select feature → Click "Edit
+                  Geometry" → Drag markers
                 </li>
                 <li>
                   <strong>Delete:</strong> Click trash icon in feature list
@@ -541,7 +551,7 @@ const datasetId = route.params.datasetId as string;
 const loadingFeatures = ref(true);
 const commitMessage = ref("");
 const currentTool = ref<"point" | "line" | "polygon" | "select" | "edit">(
-  "select"
+  "select",
 );
 const mapEditorRef = ref<InstanceType<typeof MapEditor> | null>(null);
 
@@ -619,7 +629,7 @@ const allFeatures = computed(() => {
       let currentFeature = originalFeature;
       if (isModified) {
         const modified = currentFeatures.value.find(
-          (f) => f.featureId === featureId
+          (f) => f.featureId === featureId,
         );
         if (modified) currentFeature = modified;
       }
@@ -650,11 +660,15 @@ const addedCount = computed(() => newFeatures.value.length);
 const modifiedCount = computed(() => modifiedFeatureIds.value.size);
 const deletedCount = computed(() => deletedFeatureIds.value.size);
 const totalChanges = computed(
-  () => addedCount.value + modifiedCount.value + deletedCount.value
+  () => addedCount.value + modifiedCount.value + deletedCount.value,
 );
 
 const canCommit = computed(() => {
-  return commitMessage.value.trim() !== "" && totalChanges.value > 0;
+  return (
+    commitMessage.value.trim() !== "" &&
+    totalChanges.value > 0 &&
+    !spatialStore.branchHasOpenMergeRequest
+  );
 });
 
 watch(selectedFeatureProperties, (newValue) => {
@@ -687,6 +701,11 @@ const loadCurrentFeatures = async () => {
       return;
     }
 
+    if (permissionsResult.hasOpenMergeRequest) {
+      alert("Cannot create commit: this branch has an open merge request.");
+      router.push(`/datasets/${datasetId}/branches/${branchId}`);
+      return;
+    }
   } catch (error) {
     console.error("Failed to load features:", error);
     alert("Failed to load branch permissions");
@@ -753,7 +772,7 @@ const handleGeometryUpdated = (index: number, newGeometry: any) => {
   if (feature.isOriginal) {
     // Update existing feature
     const currentIndex = currentFeatures.value.findIndex(
-      (f) => f.featureId === featureId
+      (f) => f.featureId === featureId,
     );
     if (currentIndex !== -1) {
       currentFeatures.value[currentIndex] = {
@@ -763,13 +782,13 @@ const handleGeometryUpdated = (index: number, newGeometry: any) => {
 
       // Check if it's actually different from original
       const original = originalFeatures.value.find(
-        (f) => f.featureId === featureId
+        (f) => f.featureId === featureId,
       );
       if (original) {
         const hasGeometryChanged = !deepEqual(original.geometry, newGeometry);
         const hasPropertiesChanged = !deepEqual(
           original.properties,
-          currentFeatures.value[currentIndex].properties
+          currentFeatures.value[currentIndex].properties,
         );
 
         if (hasGeometryChanged || hasPropertiesChanged) {
@@ -786,7 +805,7 @@ const handleGeometryUpdated = (index: number, newGeometry: any) => {
     }
   } else {
     const newIndex = newFeatures.value.findIndex(
-      (f) => f.featureId === featureId
+      (f) => f.featureId === featureId,
     );
     if (newIndex !== -1) {
       newFeatures.value[newIndex] = {
@@ -808,7 +827,7 @@ const selectFeatureForEdit = (feature: any, index: number) => {
   selectedFeatureProperties.value = JSON.stringify(
     feature.properties || {},
     null,
-    2
+    2,
   );
   propertiesError.value = "";
   currentTool.value = "select";
@@ -827,7 +846,7 @@ const saveFeatureProperties = () => {
     if (selectedFeature.value.isOriginal) {
       // Update existing feature
       const index = currentFeatures.value.findIndex(
-        (f) => f.featureId === featureId
+        (f) => f.featureId === featureId,
       );
       if (index !== -1) {
         currentFeatures.value[index] = {
@@ -837,16 +856,16 @@ const saveFeatureProperties = () => {
 
         // Check if it's actually different from original
         const original = originalFeatures.value.find(
-          (f) => f.featureId === featureId
+          (f) => f.featureId === featureId,
         );
         if (original) {
           const hasGeometryChanged = !deepEqual(
             original.geometry,
-            currentFeatures.value[index].geometry
+            currentFeatures.value[index].geometry,
           );
           const hasPropertiesChanged = !deepEqual(
             original.properties,
-            newProperties
+            newProperties,
           );
 
           // Only mark as modified if something actually changed
@@ -865,7 +884,7 @@ const saveFeatureProperties = () => {
     } else {
       // Update new feature
       const index = newFeatures.value.findIndex(
-        (f) => f.featureId === featureId
+        (f) => f.featureId === featureId,
       );
       if (index !== -1) {
         newFeatures.value[index] = {
@@ -899,7 +918,7 @@ const markFeatureAsDeleted = (feature: any) => {
   } else {
     // Remove from new features
     const index = newFeatures.value.findIndex(
-      (f) => f.featureId === feature.featureId
+      (f) => f.featureId === feature.featureId,
     );
     if (index !== -1) {
       newFeatures.value.splice(index, 1);
@@ -1039,7 +1058,7 @@ const loadGeoJsonFeatures = async () => {
       const geometryType = geometryTypeMap[feature.geometry.type];
       if (!geometryType) {
         console.warn(
-          `Unsupported geometry type: ${feature.geometry.type}, skipping feature`
+          `Unsupported geometry type: ${feature.geometry.type}, skipping feature`,
         );
         continue;
       }
@@ -1082,10 +1101,10 @@ const handleCommit = async () => {
   // Only include features that were actually modified (not just loaded for editing)
   for (const featureId of modifiedFeatureIds.value) {
     const currentFeature = currentFeatures.value.find(
-      (f) => f.featureId === featureId
+      (f) => f.featureId === featureId,
     );
     const originalFeature = originalFeatures.value.find(
-      (f) => f.featureId === featureId
+      (f) => f.featureId === featureId,
     );
 
     if (currentFeature && originalFeature) {
@@ -1108,7 +1127,7 @@ const handleCommit = async () => {
 
   for (const featureId of deletedFeatureIds.value) {
     const feature = originalFeatures.value.find(
-      (f) => f.featureId === featureId
+      (f) => f.featureId === featureId,
     );
     if (feature) {
       features.push({
@@ -1152,16 +1171,18 @@ const handleCommit = async () => {
 
 const handleMvtFeatureClicked = async (featureId: string) => {
   try {
-    console.log('MVT feature clicked:', featureId);
+    console.log("MVT feature clicked:", featureId);
 
     // Check if feature is already being edited
     const alreadyEditing = originalFeatures.value.some(
-      (f) => f.featureId === featureId
+      (f) => f.featureId === featureId,
     );
 
     if (alreadyEditing) {
-      console.log('Feature already in edit mode, selecting it');
-      const featureIndex = allFeatures.value.findIndex(f => f.id === featureId);
+      console.log("Feature already in edit mode, selecting it");
+      const featureIndex = allFeatures.value.findIndex(
+        (f) => f.id === featureId,
+      );
       if (featureIndex !== -1) {
         handleFeatureSelected(featureIndex);
         if (mapEditorRef.value) {
@@ -1173,12 +1194,14 @@ const handleMvtFeatureClicked = async (featureId: string) => {
 
     // Check if it's a new feature
     const isNewFeature = newFeatures.value.some(
-      (f) => f.featureId === featureId
+      (f) => f.featureId === featureId,
     );
 
     if (isNewFeature) {
-      console.log('This is a new feature, selecting it');
-      const featureIndex = allFeatures.value.findIndex(f => f.id === featureId);
+      console.log("This is a new feature, selecting it");
+      const featureIndex = allFeatures.value.findIndex(
+        (f) => f.id === featureId,
+      );
       if (featureIndex !== -1) {
         handleFeatureSelected(featureIndex);
         if (mapEditorRef.value) {
@@ -1188,22 +1211,22 @@ const handleMvtFeatureClicked = async (featureId: string) => {
       return;
     }
 
-    console.log('Fetching feature history for:', featureId);
+    console.log("Fetching feature history for:", featureId);
 
     // Fetch the feature history to get the latest version with full geometry
     const history = await api.getFeatureHistory(branchId, featureId);
 
-    console.log('Feature history received:', history);
+    console.log("Feature history received:", history);
 
     if (!history || history.length === 0) {
-      console.warn('Feature history not found:', featureId);
+      console.warn("Feature history not found:", featureId);
       return;
     }
 
     // Get the latest version (last in history)
     const latestFeature = history[history.length - 1];
 
-    console.log('Latest feature:', latestFeature);
+    console.log("Latest feature:", latestFeature);
 
     // Add to originalFeatures for tracking
     const editableFeature = {
@@ -1221,16 +1244,19 @@ const handleMvtFeatureClicked = async (featureId: string) => {
     // This will make it show up in the editable GeoJSON layer
     editingFeatureIds.value.add(featureId);
 
-    console.log('Feature loaded for editing. Total original features:', originalFeatures.value.length);
-    console.log('Editing feature IDs:', Array.from(editingFeatureIds.value));
-    console.log('Modified feature IDs:', Array.from(modifiedFeatureIds.value));
-    console.log('All features for overlay:', allFeatures.value);
+    console.log(
+      "Feature loaded for editing. Total original features:",
+      originalFeatures.value.length,
+    );
+    console.log("Editing feature IDs:", Array.from(editingFeatureIds.value));
+    console.log("Modified feature IDs:", Array.from(modifiedFeatureIds.value));
+    console.log("All features for overlay:", allFeatures.value);
 
     // Wait for next tick to ensure the feature is rendered in the overlay
-    await new Promise(resolve => setTimeout(resolve, 150));
+    await new Promise((resolve) => setTimeout(resolve, 150));
 
     // Automatically select the feature for editing
-    const featureIndex = allFeatures.value.findIndex(f => f.id === featureId);
+    const featureIndex = allFeatures.value.findIndex((f) => f.id === featureId);
     if (featureIndex !== -1) {
       // Update parent state
       handleFeatureSelected(featureIndex);
@@ -1240,12 +1266,12 @@ const handleMvtFeatureClicked = async (featureId: string) => {
         mapEditorRef.value.selectFeatureByIndex(featureIndex);
       }
 
-      console.log('Feature automatically selected at index:', featureIndex);
+      console.log("Feature automatically selected at index:", featureIndex);
     } else {
-      console.error('Could not find loaded feature in allFeatures array');
+      console.error("Could not find loaded feature in allFeatures array");
     }
   } catch (error: any) {
-    console.error('Failed to load feature for editing:', error);
+    console.error("Failed to load feature for editing:", error);
   }
 };
 
