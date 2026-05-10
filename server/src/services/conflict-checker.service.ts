@@ -52,12 +52,40 @@ export class ConflictCheckerService {
         const hasConflicts = conflicts.length > 0;
 
         if (mr.hasConflicts !== hasConflicts || hasConflicts) {
-          await this.mergeRequestRepository.update(mr.id, {
-            hasConflicts,
-            conflicts,
-          });
+          const update: Partial<MergeRequest> = { hasConflicts, conflicts };
+
+          if (hasConflicts) {
+            if (mr.status === MergeRequestStatus.APPROVED) {
+              update.status = MergeRequestStatus.OPEN;
+              this.logger.warn(
+                `MR ${mr.id} was APPROVED but has new conflicts after merge — reset to OPEN`,
+              );
+            }
+
+            if (Array.isArray(mr.conflicts)) {
+              update.conflicts = conflicts.map((newConflict: any) => {
+                const stale = (mr.conflicts as any[]).find(
+                  (c) => c.featureId === newConflict.featureId,
+                );
+                if (
+                  stale?.resolved &&
+                  stale.conflictType === newConflict.conflictType
+                ) {
+                  return {
+                    ...newConflict,
+                    resolved: false,
+                    resolution: null,
+                    resolutionData: null,
+                  };
+                }
+                return newConflict;
+              });
+            }
+          }
+
+          await this.mergeRequestRepository.update(mr.id, update);
         }
-      } catch (error) {
+      } catch (error: any) {
         this.logger.error(
           `Failed to re-check conflicts for MR ${mr.id}: ${error.message}`,
         );
@@ -130,9 +158,14 @@ export class ConflictCheckerService {
         ORDER BY sf.feature_id, sf.created_at DESC
       )
       SELECT
-        sf.feature_id AS "featureId",
-        'both_modified' AS "conflictType",
-        jsonb_build_object(
+        COALESCE(sf.feature_id, tf.feature_id) AS "featureId",
+        CASE
+          WHEN sf.feature_id IS NOT NULL AND tf.feature_id IS NOT NULL
+               AND (sf.operation = '${FeatureOperation.DELETE}' OR tf.operation = '${FeatureOperation.DELETE}')
+            THEN 'modified_deleted'
+          ELSE 'both_modified'
+        END AS "conflictType",
+        CASE WHEN sf.feature_id IS NOT NULL THEN jsonb_build_object(
           'id', sf.id,
           'featureId', sf.feature_id,
           'geometryType', sf.geometry_type,
@@ -141,8 +174,8 @@ export class ConflictCheckerService {
           'operation', sf.operation,
           'commitId', sf.commit_id,
           'createdAt', sf.created_at
-        ) AS "branchVersion",
-        jsonb_build_object(
+        ) END AS "branchVersion",
+        CASE WHEN tf.feature_id IS NOT NULL THEN jsonb_build_object(
           'id', tf.id,
           'featureId', tf.feature_id,
           'geometryType', tf.geometry_type,
@@ -151,15 +184,29 @@ export class ConflictCheckerService {
           'operation', tf.operation,
           'commitId', tf.commit_id,
           'createdAt', tf.created_at
-        ) AS "mainVersion"
+        ) END AS "mainVersion"
       FROM source_features sf
       INNER JOIN target_features tf ON sf.feature_id = tf.feature_id
-      WHERE sf.operation != '${FeatureOperation.DELETE}'
-        AND tf.operation != '${FeatureOperation.DELETE}'
-        AND (
-          NOT ST_Equals(sf.geom, tf.geom)
-          OR sf.properties::text != tf.properties::text
+      WHERE (
+        (
+          sf.operation != '${FeatureOperation.DELETE}'
+          AND tf.operation != '${FeatureOperation.DELETE}'
+          AND (
+            NOT ST_Equals(sf.geom, tf.geom)
+            OR sf.properties::text != tf.properties::text
+          )
         )
+        OR
+        (
+          sf.operation = '${FeatureOperation.DELETE}'
+          AND tf.operation != '${FeatureOperation.DELETE}'
+        )
+        OR
+        (
+          sf.operation != '${FeatureOperation.DELETE}'
+          AND tf.operation = '${FeatureOperation.DELETE}'
+        )
+      )
     `;
 
     return this.dataSource.query(query, [

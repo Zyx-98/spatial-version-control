@@ -88,7 +88,7 @@ export interface ConflictDetail {
   mainVersion: any;
   branchVersion: any;
   ancestorVersion: any | null;
-  conflictType: "modified" | "deleted" | "both_modified";
+  conflictType: "modified" | "deleted" | "both_modified" | "modified_deleted";
 }
 
 export type ConflictResolutionStrategy =

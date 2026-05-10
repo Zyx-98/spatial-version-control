@@ -448,15 +448,32 @@ export class BranchService {
       )
       SELECT
         sf.feature_id AS "featureId",
-        (SELECT fork_id FROM fork) AS "forkCommitId"
+        (SELECT fork_id FROM fork) AS "forkCommitId",
+        CASE
+          WHEN sf.operation = '${FeatureOperation.DELETE}' OR tf.operation = '${FeatureOperation.DELETE}'
+            THEN 'modified_deleted'
+          ELSE 'both_modified'
+        END AS "conflictType"
       FROM source_features sf
       INNER JOIN target_features tf ON sf.feature_id = tf.feature_id
-      WHERE sf.operation != '${FeatureOperation.DELETE}'
-        AND tf.operation != '${FeatureOperation.DELETE}'
-        AND (
-          sf.properties::text != tf.properties::text
-          OR NOT ST_Equals(sf.geom, tf.geom)
+      WHERE (
+        (
+          sf.operation != '${FeatureOperation.DELETE}'
+          AND tf.operation != '${FeatureOperation.DELETE}'
+          AND (
+            sf.properties::text != tf.properties::text
+            OR NOT ST_Equals(sf.geom, tf.geom)
+          )
         )
+        OR (
+          sf.operation = '${FeatureOperation.DELETE}'
+          AND tf.operation != '${FeatureOperation.DELETE}'
+        )
+        OR (
+          sf.operation != '${FeatureOperation.DELETE}'
+          AND tf.operation = '${FeatureOperation.DELETE}'
+        )
+      )
     `;
 
     const conflictRows = await this.dataSource.query(conflictQuery, [
@@ -534,14 +551,21 @@ export class BranchService {
       ancestorFeatures.map((f: any) => [f.featureId, f]),
     );
 
+    const conflictTypeMap = new Map<string, string>(
+      (conflictRows as Array<{ featureId: string; conflictType: string }>).map(
+        (r) => [r.featureId, r.conflictType],
+      ),
+    );
+
     return featureIds
-      .filter((id) => sourceMap.has(id) && targetMap.has(id))
+      .filter((id) => sourceMap.has(id) || targetMap.has(id))
       .map((featureId) => ({
         featureId,
-        branchVersion: sourceMap.get(featureId),
-        mainVersion: targetMap.get(featureId),
+        branchVersion: sourceMap.get(featureId) || null,
+        mainVersion: targetMap.get(featureId) || null,
         ancestorVersion: ancestorMap.get(featureId) || null,
-        conflictType: 'both_modified' as const,
+        conflictType: (conflictTypeMap.get(featureId) ||
+          'both_modified') as ConflictDetail['conflictType'],
       }));
   }
 

@@ -289,11 +289,7 @@
                   v-if="getResolution(conflict.featureId)"
                   class="px-3 py-1 bg-green-600 text-white text-sm rounded-full font-medium"
                 >
-                  {{
-                    getResolution(conflict.featureId) === "use_main"
-                      ? "Using Main"
-                      : "Using Branch"
-                  }}
+                  {{ getResolutionLabel(getResolution(conflict.featureId)!, conflict) }}
                 </div>
               </div>
 
@@ -331,7 +327,11 @@
                           clip-rule="evenodd"
                         />
                       </svg>
-                      Use Main Branch
+                      {{
+                        isModifiedDeleted(conflict) && !conflict.mainVersion
+                          ? "Accept Delete (Main)"
+                          : "Use Main Branch"
+                      }}
                     </div>
                   </button>
                   <button
@@ -356,7 +356,11 @@
                           clip-rule="evenodd"
                         />
                       </svg>
-                      Use Feature Branch
+                      {{
+                        isModifiedDeleted(conflict) && !conflict.branchVersion
+                          ? "Accept Delete (Branch)"
+                          : "Use Feature Branch"
+                      }}
                     </div>
                   </button>
                 </div>
@@ -463,12 +467,30 @@ const getResolution = (featureId: string) => {
 
 const formatConflictType = (type: string) => {
   const types: Record<string, string> = {
+    both_modified: "Both branches modified this feature",
+    modified_deleted: "Modified in one branch, deleted in another",
     MODIFY_MODIFY: "Both branches modified this feature",
     DELETE_MODIFY: "Deleted in one branch, modified in another",
     MODIFY_DELETE: "Modified in one branch, deleted in another",
-    both_modified: "Both branches modified this feature",
   };
   return types[type] || type;
+};
+
+const isModifiedDeleted = (conflict: any) =>
+  conflict.conflictType === "modified_deleted";
+
+const getResolutionLabel = (resolution: string, conflict: any) => {
+  if (resolution === "use_main") {
+    return isModifiedDeleted(conflict) && !conflict.mainVersion
+      ? "Keep Deleted (Main)"
+      : "Using Main";
+  }
+  if (resolution === "use_branch") {
+    return isModifiedDeleted(conflict) && !conflict.branchVersion
+      ? "Keep Deleted (Branch)"
+      : "Using Branch";
+  }
+  return resolution;
 };
 
 const handleReview = async (status: "approved" | "rejected") => {
@@ -481,17 +503,37 @@ const handleReview = async (status: "approved" | "rejected") => {
   }
 
   try {
-    await mergeRequestStore.reviewMergeRequest(mergeRequestId, {
+    const result = await mergeRequestStore.reviewMergeRequest(mergeRequestId, {
       status:
         status === "approved"
           ? MergeRequestStatus.APPROVED
           : MergeRequestStatus.REJECTED,
       reviewComment: reviewComment.value,
     });
-    alert(`Merge request ${status}!`);
+
+    if (result?.status === MergeRequestStatus.CLOSED) {
+      alert(
+        "Merge request closed: all conflicts were resolved using the main branch version, so there were no new changes to merge."
+      );
+    } else {
+      alert(`Merge request ${status}!`);
+    }
     router.push("/merge-requests");
   } catch (error: any) {
-    alert(error.response?.data?.message || `Failed to ${status} merge request`);
+    const httpStatus = error.response?.status;
+    const message = error.response?.data?.message || `Failed to ${status} merge request`;
+
+    if (httpStatus === 409 && status === "approved") {
+      // New conflicts were detected during merge — reload and show conflict modal
+      alert(`${message}\n\nThe conflicts panel will now open so you can resolve them.`);
+      await loadMergeRequest();
+      if (mergeRequest.value?.hasConflicts) {
+        showConflictsModal.value = true;
+        resolutions.value = [];
+      }
+    } else {
+      alert(message);
+    }
   }
 };
 

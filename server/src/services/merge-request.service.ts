@@ -259,13 +259,16 @@ export class MergeRequestService {
       throw new BadRequestException('Merge request is not open');
     }
 
-    if (
-      reviewDto.status === MergeRequestStatus.APPROVED &&
-      mergeRequest.hasConflicts
-    ) {
-      throw new BadRequestException(
-        'Cannot aprove merge request with unresolved conflicts',
-      );
+    if (reviewDto.status === MergeRequestStatus.APPROVED) {
+      const fresh = await this.mergeRequestRepository.findOne({
+        where: { id },
+        select: ['id', 'hasConflicts'],
+      });
+      if (fresh?.hasConflicts) {
+        throw new BadRequestException(
+          'Cannot approve merge request with unresolved conflicts',
+        );
+      }
     }
 
     mergeRequest.status = reviewDto.status;
@@ -277,6 +280,11 @@ export class MergeRequestService {
 
     if (reviewDto.status === MergeRequestStatus.APPROVED) {
       await this.performMerge(updateMergeRequest, user);
+      const finalMR = await this.mergeRequestRepository.findOne({
+        where: { id: updateMergeRequest.id },
+        relations: ['sourceBranch', 'targetBranch', 'createdBy', 'reviewedBy'],
+      });
+      return finalMR ?? updateMergeRequest;
     }
 
     return updateMergeRequest;
@@ -287,6 +295,7 @@ export class MergeRequestService {
     await queryRunner.connect();
     await queryRunner.startTransaction();
 
+    let earlyExit = false;
     try {
       const sourceBranch = await this.branchService.findOne(
         mergeRequest.sourceBranchId,
@@ -310,6 +319,28 @@ export class MergeRequestService {
         throw new ConflictException(
           'Target branch has been updated by another user. Please refresh and try again.',
         );
+      }
+
+      const mainMovedSinceResolution =
+        sourceBranch.forkCommitId !== lockedTargetBranch.headCommitId;
+
+      if (mainMovedSinceResolution) {
+        const freshConflicts = await this.branchService.detectConflicts(
+          sourceBranch,
+          { ...targetBranch, headCommitId: lockedTargetBranch.headCommitId },
+        );
+
+        if (freshConflicts.length > 0) {
+          await queryRunner.manager.update(MergeRequest, mergeRequest.id, {
+            hasConflicts: true,
+            conflicts: freshConflicts,
+            status: MergeRequestStatus.OPEN,
+          });
+          await queryRunner.commitTransaction();
+          await queryRunner.release();
+          earlyExit = true;
+          throw new ConflictException('New conflicts detected, merge aborted');
+        }
       }
 
       const sourceOnlyFeatures = await this.dataSource.query(
@@ -365,6 +396,20 @@ export class MergeRequestService {
         },
       );
 
+      if (featuresToWrite.length === 0) {
+        mergeRequest.status = MergeRequestStatus.CLOSED;
+        await queryRunner.manager.save(mergeRequest);
+        sourceBranch.isDisabled = true;
+        delete (sourceBranch as any).commits;
+        delete (sourceBranch as any).dataset;
+        delete (sourceBranch as any).createdBy;
+        await queryRunner.manager.save(sourceBranch);
+        await queryRunner.commitTransaction();
+        await queryRunner.release();
+        earlyExit = true;
+        return;
+      }
+
       const mergeCommit = queryRunner.manager.create(Commit, {
         message: `Merge branch '${sourceBranch.name}' into '${targetBranch.name}'`,
         branchId: targetBranch.id,
@@ -406,10 +451,10 @@ export class MergeRequestService {
 
       await queryRunner.commitTransaction();
     } catch (error) {
-      await queryRunner.rollbackTransaction();
+      if (!earlyExit) await queryRunner.rollbackTransaction();
       throw error;
     } finally {
-      await queryRunner.release();
+      if (!earlyExit) await queryRunner.release();
     }
 
     await this.conflictCheckerService.recheckConflictsForMainBranch(
@@ -636,6 +681,7 @@ export class MergeRequestService {
         delete (sourceBranch as any).dataset;
         delete (sourceBranch as any).createdBy;
         sourceBranch.headCommitId = savedCommit.id;
+        sourceBranch.forkCommitId = targetBranch.headCommitId;
         sourceBranch.hasUnresolvedConflicts = false;
         await queryRunner.manager.save(sourceBranch);
 
